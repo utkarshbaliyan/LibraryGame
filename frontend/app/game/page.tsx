@@ -10,19 +10,35 @@ import { fetchInvites, type InviteEntry } from '@/lib/api';
 import { useRouter } from 'next/navigation';
 
 // ── Types ─────────────────────────────────────────────────────────────────
+type PState = 'idle' | 'browsing' | 'studying' | 'paused';
+
 interface PlayerSnapshot {
   name: string;
   sessionSeconds: number;
-  pstate: 'idle' | 'browsing' | 'studying';
+  pstate: PState;
   isMe: boolean;
 }
 
 interface GameState {
-  pstate: 'idle' | 'browsing' | 'studying';
+  pstate: PState;
   sessionLeft: number;
   sessionSeconds: number;
   seatId: number;
   idleSince: number;
+}
+
+interface ChatMessage {
+  id: number;
+  from: string;
+  fromDisplay?: string;
+  to: string;
+  body: string;
+  createdAt: number;
+}
+
+interface FriendEntry {
+  username: string;
+  displayName: string;
 }
 
 // ── Phaser game script (runs after CDN scripts load) ──────────────────────
@@ -518,6 +534,16 @@ const GAME_SCRIPT = `
         if(r){r.con.destroy();this.remotes.delete(sid);}
         this._emitPlayers();
       });
+
+      // Chat relay: server → React
+      this.room.onMessage('chatMsg',    data=>emit('chatMsg',    data));
+      this.room.onMessage('chatHistory',data=>emit('chatHistory',data));
+
+      // Chat relay: React → server
+      window.addEventListener('sl:chatSend',       e=>{ if(this.room) this.room.send('chatSend',{to:e.detail.to,body:e.detail.body}); });
+      window.addEventListener('sl:chatHistoryReq', e=>{ if(this.room) this.room.send('chatHistory',{friend:e.detail.friend}); });
+      window.addEventListener('sl:pauseSession',   ()=>{ if(this.room) this.room.send('pauseSession'); });
+      window.addEventListener('sl:resumeSession',  ()=>{ if(this.room) this.room.send('resumeSession'); });
     }
 
     _emitPlayers(){
@@ -678,6 +704,15 @@ export default function GamePage() {
   const [myUsername, setMyUsername]         = useState('');
   const [myName, setMyName]                 = useState('');
   const [invites, setInvites]               = useState<InviteEntry[]>([]);
+  // ── Chat state ──────────────────────────────────────────────────────────
+  const [chatTab, setChatTab]               = useState<'board'|'chat'>('board');
+  const [chatFriend, setChatFriend]         = useState<string|null>(null);
+  const [chatFriendDisplay, setChatFriendDisplay] = useState('');
+  const [chatMessages, setChatMessages]     = useState<Map<string, ChatMessage[]>>(new Map());
+  const [unread, setUnread]                 = useState<Record<string,number>>({});
+  const [friends, setFriends]               = useState<FriendEntry[]>([]);
+  const [chatInput, setChatInput]           = useState('');
+  const chatBottomRef                       = useRef<HTMLDivElement>(null);
   const gameScriptInjectedRef               = useRef(false);
 
   useEffect(() => {
@@ -772,6 +807,106 @@ export default function GamePage() {
     window.dispatchEvent(new CustomEvent('sl:standUp'));
   }, []);
 
+  const pauseSession = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('sl:pauseSession'));
+  }, []);
+
+  const resumeSession = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('sl:resumeSession'));
+  }, []);
+
+  // Fetch friend list on mount / username change
+  useEffect(() => {
+    if (!myUsername) return;
+    fetch(`http://localhost:2567/friends/${myUsername}`)
+      .then(r => r.json())
+      .then(d => setFriends(d.friends ?? []))
+      .catch(() => {});
+  }, [myUsername]);
+
+  // Fetch initial unread counts
+  useEffect(() => {
+    if (!myUsername) return;
+    const poll = () => fetch(`http://localhost:2567/chat/unread/${myUsername}`)
+      .then(r => r.json())
+      .then(d => setUnread(d))
+      .catch(() => {});
+    poll();
+    const iv = setInterval(poll, 15000);
+    return () => clearInterval(iv);
+  }, [myUsername]);
+
+  // Listen to incoming chat messages from Phaser/Colyseus
+  useEffect(() => {
+    const handler = (e: CustomEvent) => {
+      const msg: ChatMessage = e.detail;
+      const key = msg.from === myUsername ? msg.to : msg.from;
+      setChatMessages(prev => {
+        const next = new Map(prev);
+        next.set(key, [...(next.get(key) ?? []), msg]);
+        return next;
+      });
+      if (msg.from !== myUsername) {
+        setUnread(prev => ({ ...prev, [msg.from]: (prev[msg.from] ?? 0) + 1 }));
+      }
+    };
+    window.addEventListener('sl:chatMsg', handler as EventListener);
+    return () => window.removeEventListener('sl:chatMsg', handler as EventListener);
+  }, [myUsername]);
+
+  // Listen to history responses
+  useEffect(() => {
+    const handler = (e: CustomEvent) => {
+      const { friend, msgs } = e.detail;
+      setChatMessages(prev => { const n = new Map(prev); n.set(friend, msgs); return n; });
+      setUnread(prev => { const n = { ...prev }; delete n[friend]; return n; });
+    };
+    window.addEventListener('sl:chatHistory', handler as EventListener);
+    return () => window.removeEventListener('sl:chatHistory', handler as EventListener);
+  }, []);
+
+  // Auto-scroll to bottom when messages update
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages, chatFriend]);
+
+  const openChat = useCallback((username: string, displayName: string) => {
+    setChatFriend(username);
+    setChatFriendDisplay(displayName);
+    setUnread(prev => { const n = { ...prev }; delete n[username]; return n; });
+    // Request history via Colyseus if in game, else via HTTP
+    if ((window as any).__gameScene?.room) {
+      window.dispatchEvent(new CustomEvent('sl:chatHistoryReq', { detail: { friend: username } }));
+    } else {
+      fetch(`http://localhost:2567/chat/history/${myUsername}/${username}`)
+        .then(r => r.json())
+        .then(msgs => setChatMessages(prev => { const n = new Map(prev); n.set(username, msgs); return n; }))
+        .catch(() => {});
+    }
+  }, [myUsername]);
+
+  const sendChat = useCallback(() => {
+    const body = chatInput.trim();
+    if (!body || !chatFriend) return;
+    setChatInput('');
+    if ((window as any).__gameScene?.room) {
+      window.dispatchEvent(new CustomEvent('sl:chatSend', { detail: { to: chatFriend, body } }));
+    } else {
+      fetch('http://localhost:2567/chat/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: myUsername, to: chatFriend, body }),
+      }).then(r => r.json()).then(saved => {
+        if (saved.ok) {
+          const msg: ChatMessage = { id: saved.id, from: myUsername, to: chatFriend, body, createdAt: saved.createdAt };
+          setChatMessages(prev => { const n = new Map(prev); n.set(chatFriend, [...(n.get(chatFriend) ?? []), msg]); return n; });
+        }
+      }).catch(() => {});
+    }
+  }, [chatInput, chatFriend, myUsername]);
+
+  const totalUnread = Object.values(unread).reduce((a, b) => a + b, 0);
+
   // ── Derived UI state ──────────────────────────────────────────────────
   const { pstate, sessionLeft, sessionSeconds, idleSince } = gameState;
   const nowSec = Math.floor(Date.now() / 1000);
@@ -808,16 +943,16 @@ export default function GamePage() {
         </div>
       </nav>
 
-      {/* ── Studying bar ── */}
+      {/* ── Studying / Paused bar ── */}
       <AnimatePresence>
-        {pstate === 'studying' && (
+        {(pstate === 'studying' || pstate === 'paused') && (
           <motion.div
             initial={{ height:0, opacity:0 }}
             animate={{ height:'auto', opacity:1 }}
             exit={{ height:0, opacity:0 }}
             style={{
-              background:'rgba(167,139,250,0.07)',
-              borderBottom:'1px solid rgba(167,139,250,0.2)',
+              background: pstate === 'paused' ? 'rgba(251,146,60,0.07)' : 'rgba(167,139,250,0.07)',
+              borderBottom: pstate === 'paused' ? '1px solid rgba(251,146,60,0.3)' : '1px solid rgba(167,139,250,0.2)',
               overflow:'hidden',
             }}
           >
@@ -826,19 +961,34 @@ export default function GamePage() {
               padding:'8px 28px',
               fontFamily:"'Space Mono',monospace",
             }}>
-              <div style={{ fontSize:11, color:'var(--muted)', letterSpacing:'0.08em' }}>
-                SESSION IN PROGRESS
+              <div style={{ fontSize:11, letterSpacing:'0.08em',
+                color: pstate === 'paused' ? 'var(--amber)' : 'var(--muted)' }}>
+                {pstate === 'paused' ? '⏸ PAUSED — CHAT TO REPLY' : 'SESSION IN PROGRESS'}
               </div>
               <div style={{
                 fontSize:24, fontWeight:700,
-                color: sessionLeft < 300 ? 'var(--red)' : sessionLeft < 900 ? 'var(--amber)' : 'var(--purple)',
-                animation: sessionLeft < 300 ? 'flash 0.6s ease-in-out infinite alternate' : 'none',
+                color: pstate === 'paused' ? 'var(--amber)'
+                  : sessionLeft < 300 ? 'var(--red)'
+                  : sessionLeft < 900 ? 'var(--amber)' : 'var(--purple)',
+                animation: pstate !== 'paused' && sessionLeft < 300 ? 'flash 0.6s ease-in-out infinite alternate' : 'none',
               }}>
                 {fmtHMS(sessionLeft)}
               </div>
-              <button className="btn-ghost" style={{ fontSize:10 }} onClick={standUp}>
-                END SESSION
-              </button>
+              <div style={{ display:'flex', gap:8 }}>
+                {pstate === 'studying' ? (
+                  <button className="btn-ghost" style={{ fontSize:10, color:'var(--amber)' }}
+                    onClick={() => { pauseSession(); setChatTab('chat'); }}>
+                    ⏸ PAUSE
+                  </button>
+                ) : (
+                  <button className="btn-neon" style={{ fontSize:10 }} onClick={resumeSession}>
+                    ▶ RESUME
+                  </button>
+                )}
+                <button className="btn-ghost" style={{ fontSize:10 }} onClick={standUp}>
+                  END SESSION
+                </button>
+              </div>
             </div>
           </motion.div>
         )}
@@ -859,11 +1009,13 @@ export default function GamePage() {
         }}>
           {hudMsg || (pstate === 'studying'
             ? `STUDYING: ${fmtHMS(sessionSeconds)}`
-            : timeLeft <= 15 && idleSince > 0
-              ? `${pstate === 'browsing' ? 'SIT DOWN' : 'BUY + SIT'}: ${timeLeft}s`
-              : pstate === 'browsing'
-                ? 'FIND A DESK & PRESS [E]'
-                : 'HEAD TO THE COUNTER'
+            : pstate === 'paused'
+              ? `PAUSED AT ${fmtHMS(sessionSeconds)} · RESUME TO CONTINUE`
+              : timeLeft <= 15 && idleSince > 0
+                ? `${pstate === 'browsing' ? 'SIT DOWN' : 'BUY + SIT'}: ${timeLeft}s`
+                : pstate === 'browsing'
+                  ? 'FIND A DESK & PRESS [E]'
+                  : 'HEAD TO THE COUNTER'
           )}
         </span>
         <span style={{
@@ -902,13 +1054,13 @@ export default function GamePage() {
           background:'#1b3028',
         }} />
 
-        {/* ── Library Leaderboard panel ── */}
+        {/* ── Right panel: Board / Chat tabs ── */}
         <motion.div
           initial={{ opacity:0, x:14 }}
           animate={{ opacity:1, x:0 }}
           transition={{ duration:0.3, delay:0.2 }}
           style={{
-            width:224, flexShrink:0,
+            width:234, flexShrink:0,
             height:600,
             background:'var(--card)',
             border:'1px solid var(--border)',
@@ -922,87 +1074,231 @@ export default function GamePage() {
           <div style={{ position:'absolute', top:-1, left:-1, width:10, height:10, borderTop:'2px solid var(--accent)', borderLeft:'2px solid var(--accent)' }} />
           <div style={{ position:'absolute', bottom:-1, right:-1, width:10, height:10, borderBottom:'2px solid var(--accent)', borderRight:'2px solid var(--accent)' }} />
 
-          {/* Header */}
+          {/* Tab bar */}
           <div style={{
-            padding:'12px 14px 10px',
-            borderBottom:'1px solid var(--border)',
-            display:'flex', alignItems:'center', justifyContent:'space-between',
-            flexShrink:0,
+            display:'flex', borderBottom:'1px solid var(--border)', flexShrink:0,
           }}>
-            <span className="label-chip" style={{ fontSize:9 }}>Library Board</span>
-            <span style={{
-              display:'flex', alignItems:'center', gap:5,
-              fontFamily:"'Space Mono',monospace", fontSize:11, color:'var(--dim)',
-            }}>
-              <span className="live-dot" style={{ width:6, height:6 }} />
-              {players.length}
-            </span>
+            {(['board','chat'] as const).map(tab => (
+              <button key={tab} onClick={() => setChatTab(tab)}
+                style={{
+                  flex:1, padding:'9px 0',
+                  background:'none', border:'none', cursor:'pointer',
+                  fontFamily:"'Space Mono',monospace", fontSize:9,
+                  letterSpacing:'0.1em',
+                  color: chatTab === tab ? 'var(--accent)' : 'var(--dim)',
+                  borderBottom: chatTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
+                  transition:'color 0.15s',
+                  position:'relative',
+                }}>
+                {tab === 'board' ? 'BOARD' : 'CHAT'}
+                {tab === 'chat' && totalUnread > 0 && (
+                  <span style={{
+                    position:'absolute', top:5, right:16,
+                    background:'var(--red)', color:'#fff',
+                    borderRadius:99, fontSize:8, fontWeight:700,
+                    padding:'1px 5px', lineHeight:'14px',
+                  }}>{totalUnread > 9 ? '9+' : totalUnread}</span>
+                )}
+              </button>
+            ))}
           </div>
 
-          {/* Rows */}
-          <div style={{ flex:1, overflowY:'auto', padding:'4px 0' }}>
-            {sortedPlayers.length === 0 ? (
-              <div style={{
-                textAlign:'center', padding:'28px 12px',
-                fontFamily:"'Space Mono',monospace",
-                fontSize:10, letterSpacing:'0.1em',
-                color:'var(--dim)', lineHeight:1.8,
-              }}>
-                NO PLAYERS<br />IN THIS LIBRARY
-              </div>
-            ) : sortedPlayers.map((p, i) => {
-              const rank = i + 1;
-              const rankColor = rank === 1 ? '#f59e0b' : rank === 2 ? '#94a3b8' : rank === 3 ? '#cd7c3b' : 'var(--dim)';
-              return (
-                <div key={p.name} style={{
-                  display:'flex', alignItems:'center', gap:7,
-                  padding:'7px 12px',
-                  background: p.isMe ? 'rgba(245,158,11,0.06)' : 'transparent',
-                  borderLeft: p.isMe ? '2px solid var(--accent)' : '2px solid transparent',
+          {/* ── BOARD tab ── */}
+          {chatTab === 'board' && (<>
+            <div style={{ flex:1, overflowY:'auto', padding:'4px 0' }}>
+              {sortedPlayers.length === 0 ? (
+                <div style={{
+                  textAlign:'center', padding:'28px 12px',
+                  fontFamily:"'Space Mono',monospace",
+                  fontSize:10, letterSpacing:'0.1em',
+                  color:'var(--dim)', lineHeight:1.8,
                 }}>
-                  <span style={{
-                    fontFamily:"'Space Mono',monospace",
-                    fontSize:10, fontWeight:700,
-                    width:22, textAlign:'right', flexShrink:0,
-                    color: rankColor,
+                  NO PLAYERS<br />IN THIS LIBRARY
+                </div>
+              ) : sortedPlayers.map((p, i) => {
+                const rank = i + 1;
+                const rankColor = rank === 1 ? '#f59e0b' : rank === 2 ? '#94a3b8' : rank === 3 ? '#cd7c3b' : 'var(--dim)';
+                return (
+                  <div key={p.name} style={{
+                    display:'flex', alignItems:'center', gap:7,
+                    padding:'7px 12px',
+                    background: p.isMe ? 'rgba(245,158,11,0.06)' : 'transparent',
+                    borderLeft: p.isMe ? '2px solid var(--accent)' : '2px solid transparent',
                   }}>
-                    #{rank}
-                  </span>
-                  <span className={`live-dot${p.pstate === 'studying' ? ' purple' : p.pstate === 'browsing' ? ' amber' : ' dim'}`}
-                    style={{ width:7, height:7 }}
-                  />
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{
-                      fontSize:12, fontWeight:600,
-                      color: p.isMe ? 'var(--accent)' : 'var(--text)',
-                      whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis',
-                    }}>
-                      {p.name}
-                    </div>
-                    <div style={{
+                    <span style={{
                       fontFamily:"'Space Mono',monospace",
-                      fontSize:10,
-                      color: rank <= 3 ? rankColor : p.isMe ? 'var(--accent)' : 'var(--dim)',
-                      marginTop:1,
-                    }}>
-                      {fmtStudyTime(p.sessionSeconds)}
+                      fontSize:10, fontWeight:700,
+                      width:22, textAlign:'right', flexShrink:0,
+                      color: rankColor,
+                    }}>#{rank}</span>
+                    <span className={`live-dot${p.pstate === 'studying' || p.pstate === 'paused' ? ' purple' : p.pstate === 'browsing' ? ' amber' : ' dim'}`}
+                      style={{ width:7, height:7 }} />
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:12, fontWeight:600,
+                        color: p.isMe ? 'var(--accent)' : 'var(--text)',
+                        whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                        {p.name}
+                      </div>
+                      <div style={{ fontFamily:"'Space Mono',monospace", fontSize:10,
+                        color: rank <= 3 ? rankColor : p.isMe ? 'var(--accent)' : 'var(--dim)', marginTop:1 }}>
+                        {fmtStudyTime(p.sessionSeconds)}
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+            <div style={{ padding:'7px 12px', borderTop:'1px solid var(--border)',
+              fontFamily:"'Space Mono',monospace", fontSize:9, letterSpacing:'0.1em',
+              color:'var(--dim)', textAlign:'center', flexShrink:0 }}>
+              STUDY TIME ONLY
+            </div>
+          </>)}
 
-          {/* Footer */}
-          <div style={{
-            padding:'7px 12px',
-            borderTop:'1px solid var(--border)',
-            fontFamily:"'Space Mono',monospace",
-            fontSize:9, letterSpacing:'0.1em', color:'var(--dim)',
-            textAlign:'center', flexShrink:0,
-          }}>
-            STUDY TIME ONLY
-          </div>
+          {/* ── CHAT tab ── */}
+          {chatTab === 'chat' && (<>
+            {!chatFriend ? (
+              /* Friend list */
+              <div style={{ flex:1, overflowY:'auto' }}>
+                {friends.length === 0 ? (
+                  <div style={{ textAlign:'center', padding:'28px 12px',
+                    fontFamily:"'Space Mono',monospace", fontSize:9,
+                    color:'var(--dim)', lineHeight:1.8 }}>
+                    NO FRIENDS YET<br />
+                    <Link href="/friends" style={{ color:'var(--accent)', fontSize:9 }}>ADD FRIENDS →</Link>
+                  </div>
+                ) : friends.map(f => (
+                  <button key={f.username}
+                    onClick={() => openChat(f.username, f.displayName)}
+                    style={{
+                      width:'100%', background:'none', border:'none', cursor:'pointer',
+                      display:'flex', alignItems:'center', gap:9,
+                      padding:'9px 12px',
+                      borderBottom:'1px solid rgba(255,255,255,0.04)',
+                      transition:'background 0.12s',
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background='rgba(255,255,255,0.04)')}
+                    onMouseLeave={e => (e.currentTarget.style.background='none')}
+                  >
+                    <div style={{
+                      width:30, height:30, borderRadius:'50%', flexShrink:0,
+                      background:'var(--card-hover)',
+                      display:'flex', alignItems:'center', justifyContent:'center',
+                      fontSize:13, fontWeight:700, color:'var(--accent)',
+                    }}>{f.displayName[0]?.toUpperCase()}</div>
+                    <div style={{ flex:1, minWidth:0, textAlign:'left' }}>
+                      <div style={{ fontSize:12, fontWeight:600, color:'var(--text)',
+                        whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                        {f.displayName}
+                      </div>
+                      {(chatMessages.get(f.username)?.at(-1)) && (
+                        <div style={{ fontSize:10, color:'var(--dim)', marginTop:1,
+                          whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                          {chatMessages.get(f.username)!.at(-1)!.body}
+                        </div>
+                      )}
+                    </div>
+                    {(unread[f.username] ?? 0) > 0 && (
+                      <span style={{
+                        background:'var(--red)', color:'#fff',
+                        borderRadius:99, fontSize:9, fontWeight:700,
+                        padding:'2px 6px', flexShrink:0,
+                      }}>{unread[f.username]}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              /* Message thread */
+              <>
+                {/* Thread header */}
+                <div style={{ padding:'8px 10px', borderBottom:'1px solid var(--border)',
+                  display:'flex', alignItems:'center', gap:8, flexShrink:0 }}>
+                  <button onClick={() => setChatFriend(null)}
+                    style={{ background:'none', border:'none', cursor:'pointer',
+                      color:'var(--muted)', fontSize:14, lineHeight:1, padding:'2px 4px' }}>
+                    ←
+                  </button>
+                  <span style={{ fontSize:12, fontWeight:600, color:'var(--text)',
+                    overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                    {chatFriendDisplay}
+                  </span>
+                </div>
+
+                {/* Messages */}
+                <div style={{ flex:1, overflowY:'auto', padding:'8px 10px',
+                  display:'flex', flexDirection:'column', gap:6 }}>
+                  {(chatMessages.get(chatFriend) ?? []).map(msg => {
+                    const isMe = msg.from === myUsername;
+                    return (
+                      <div key={msg.id} style={{
+                        display:'flex', flexDirection:'column',
+                        alignItems: isMe ? 'flex-end' : 'flex-start',
+                      }}>
+                        <div style={{
+                          background: isMe ? 'rgba(167,139,250,0.18)' : 'rgba(255,255,255,0.06)',
+                          border: isMe ? '1px solid rgba(167,139,250,0.3)' : '1px solid rgba(255,255,255,0.08)',
+                          borderRadius: isMe ? '12px 12px 3px 12px' : '12px 12px 12px 3px',
+                          padding:'6px 10px',
+                          maxWidth:'85%',
+                          fontSize:12, color:'var(--text)', lineHeight:1.5,
+                          wordBreak:'break-word',
+                        }}>
+                          {msg.body}
+                        </div>
+                        <span style={{ fontSize:9, color:'var(--dim)', marginTop:2 }}>
+                          {new Date(msg.createdAt * 1000).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  <div ref={chatBottomRef} />
+                </div>
+
+                {/* Input */}
+                {(pstate === 'studying') ? (
+                  <div style={{ padding:'8px 10px', borderTop:'1px solid var(--border)',
+                    display:'flex', flexDirection:'column', gap:6, flexShrink:0 }}>
+                    <div style={{ fontSize:10, color:'var(--amber)', textAlign:'center',
+                      fontFamily:"'Space Mono',monospace", letterSpacing:'0.06em' }}>
+                      PAUSE SESSION TO REPLY
+                    </div>
+                    <button className="btn-ghost" style={{ fontSize:10 }} onClick={() => { pauseSession(); }}>
+                      ⏸ PAUSE &amp; REPLY
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ padding:'8px 10px', borderTop:'1px solid var(--border)',
+                    display:'flex', gap:6, flexShrink:0 }}>
+                    <input
+                      value={chatInput}
+                      onChange={e => setChatInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } }}
+                      placeholder="Message…"
+                      maxLength={500}
+                      style={{
+                        flex:1, background:'rgba(255,255,255,0.05)',
+                        border:'1px solid var(--border)', borderRadius:6,
+                        padding:'6px 9px', fontSize:12, color:'var(--text)',
+                        outline:'none', fontFamily:'inherit',
+                      }}
+                    />
+                    <button onClick={sendChat} disabled={!chatInput.trim()}
+                      style={{
+                        background: chatInput.trim() ? 'var(--accent)' : 'rgba(255,255,255,0.06)',
+                        border:'none', borderRadius:6, padding:'0 10px',
+                        color: chatInput.trim() ? '#000' : 'var(--dim)',
+                        cursor: chatInput.trim() ? 'pointer' : 'default',
+                        fontSize:14, fontWeight:700, flexShrink:0,
+                        transition:'background 0.15s',
+                      }}>
+                      →
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </>)}
         </motion.div>
       </div>
 

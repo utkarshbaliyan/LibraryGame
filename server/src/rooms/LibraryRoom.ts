@@ -1,11 +1,14 @@
 import { Room, Client } from "colyseus";
 import { LibraryState, Player } from "./schema/LibraryState";
-import { saveSession, ensureUser, getDisplayName } from "../db";
+import { saveSession, ensureUser, getDisplayName, areFriends, saveMessage, getMessages, markRead } from "../db";
 import { onlineUsers } from "../online";
+import { chatSessions } from "../chatSessions";
 
 interface MoveMessage     { x: number; y: number; dir: string; moving: boolean; }
 interface BuyMessage      { minutes: number; }
 interface SitDownMessage  { seatId: number; }
+interface ChatSendMessage { to: string; body: string; }
+interface ChatHistoryMsg  { friend: string; }
 interface JoinOptions     { username?: string; displayName?: string; label?: string; isGlobal?: boolean; createdBy?: string; }
 
 const VALID_DURATIONS = new Set([30, 45, 60, 90, 120, 150, 180, 210]);
@@ -35,7 +38,8 @@ export const SEATS = DESKS.map((d, id) => ({
 
 export class LibraryRoom extends Room<LibraryState> {
   maxClients = 100;
-  private takenSeats = new Set<number>();
+  private takenSeats  = new Set<number>();
+  private pausedLeft  = new Map<string, number>();  // sessionId → frozen sessionLeft
 
   onCreate(options: JoinOptions) {
     const isGlobal = options?.isGlobal ?? false;
@@ -87,9 +91,47 @@ export class LibraryRoom extends Room<LibraryState> {
 
     this.onMessage("standUp", (client: Client) => {
       const p = this.state.players.get(client.sessionId);
-      if (!p || p.pstate !== "studying") return;
-      this.releasePlayer(p);
+      if (!p || (p.pstate !== "studying" && p.pstate !== "paused")) return;
+      this.releasePlayer(p, client.sessionId);
       client.send("sessionEnd", { early: true });
+    });
+
+    this.onMessage("pauseSession", (client: Client) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p || p.pstate !== "studying") return;
+      this.pausedLeft.set(client.sessionId, p.sessionLeft);
+      p.pstate = "paused";
+    });
+
+    this.onMessage("resumeSession", (client: Client) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p || p.pstate !== "paused") return;
+      p.sessionLeft = this.pausedLeft.get(client.sessionId) ?? p.sessionLeft;
+      this.pausedLeft.delete(client.sessionId);
+      p.pstate = "studying";
+    });
+
+    this.onMessage("chatSend", (client: Client, data: ChatSendMessage) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p || !data.to || !data.body?.trim()) return;
+      if (p.pstate === "studying") return;   // must pause first
+      if (!areFriends(p.username, data.to)) return;
+      const saved = saveMessage(p.username, data.to, data.body.trim());
+      const packet = {
+        id: saved.id, from: p.username, fromDisplay: p.name,
+        to: data.to, body: data.body.trim(), createdAt: saved.createdAt,
+      };
+      client.send("chatMsg", packet);  // echo to sender
+      const dest = chatSessions.get(data.to.toLowerCase());
+      if (dest) dest.send("chatMsg", packet);
+    });
+
+    this.onMessage("chatHistory", (client: Client, data: ChatHistoryMsg) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p || !data.friend) return;
+      markRead(p.username, data.friend);
+      const msgs = getMessages(p.username, data.friend);
+      client.send("chatHistory", { friend: data.friend, msgs });
     });
 
     this.clock.setInterval(() => {
@@ -97,18 +139,20 @@ export class LibraryRoom extends Room<LibraryState> {
       const toKick: string[] = [];
 
       this.state.players.forEach((p, sid) => {
-        if (p.pstate === "studying") p.sessionSeconds++;
-
         if (p.pstate === "studying") {
+          p.sessionSeconds++;
           p.sessionLeft--;
           if (p.sessionLeft <= 0) {
-            this.releasePlayer(p);
+            this.releasePlayer(p, sid);
             const c = this.clients.find(c => c.sessionId === sid);
             if (c) c.send("sessionEnd", { early: false });
           }
-        } else if (p.idleSince > 0 && nowSec - p.idleSince >= IDLE_KICK_SECS) {
-          toKick.push(sid);
+        } else if (p.pstate === "idle" || p.pstate === "browsing") {
+          if (p.idleSince > 0 && nowSec - p.idleSince >= IDLE_KICK_SECS) {
+            toKick.push(sid);
+          }
         }
+        // paused: timer frozen, no kick
       });
 
       for (const sid of toKick) {
@@ -121,11 +165,13 @@ export class LibraryRoom extends Room<LibraryState> {
     }, 1000);
   }
 
-  private releasePlayer(p: Player) {
-    const studiedSecs = p.sessionMins * 60 - p.sessionLeft;
+  private releasePlayer(p: Player, sessionId?: string) {
+    const frozenLeft  = sessionId ? (this.pausedLeft.get(sessionId) ?? p.sessionLeft) : p.sessionLeft;
+    const studiedSecs = p.sessionMins * 60 - frozenLeft;
     if (studiedSecs >= 60) {
       try { saveSession(p.username || p.name, this.roomId, Math.floor(studiedSecs)); } catch { }
     }
+    if (sessionId) this.pausedLeft.delete(sessionId);
     if (p.seatId >= 0) { this.takenSeats.delete(p.seatId); p.seatId = -1; }
     p.pstate      = "idle";
     p.sessionLeft = 0;
@@ -150,6 +196,9 @@ export class LibraryRoom extends Room<LibraryState> {
 
     try { ensureUser(username, displayName); } catch { }
 
+    // Track chat routing
+    chatSessions.set(username, client);
+
     // Track online presence
     onlineUsers.set(username, {
       username,
@@ -164,12 +213,15 @@ export class LibraryRoom extends Room<LibraryState> {
   onLeave(client: Client) {
     const p = this.state.players.get(client.sessionId);
     if (p) {
+      chatSessions.delete(p.username);
       if (p.seatId >= 0) this.takenSeats.delete(p.seatId);
-      if (p.pstate === "studying" && p.sessionMins > 0) {
-        const studiedSecs = p.sessionMins * 60 - p.sessionLeft;
+      if ((p.pstate === "studying" || p.pstate === "paused") && p.sessionMins > 0) {
+        const frozenLeft  = this.pausedLeft.get(client.sessionId) ?? p.sessionLeft;
+        const studiedSecs = p.sessionMins * 60 - frozenLeft;
         if (studiedSecs >= 60) {
           try { saveSession(p.username || p.name, this.roomId, Math.floor(studiedSecs)); } catch { }
         }
+        this.pausedLeft.delete(client.sessionId);
       }
       onlineUsers.delete(p.username || p.name);
       console.log(`[-] ${p.name} left`);

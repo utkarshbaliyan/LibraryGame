@@ -49,9 +49,11 @@ interface FriendRowProps {
   onRemove: (u: string) => void;
   onBlock:  (u: string) => void;
   onInvite: (u: string) => void;
+  onChat:   (u: string, display: string) => void;
+  unread?: number;
 }
 
-function FriendRow({ entry, myUsername, onRemove, onBlock, onInvite }: FriendRowProps) {
+function FriendRow({ entry, myUsername, onRemove, onBlock, onInvite, onChat, unread = 0 }: FriendRowProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -88,6 +90,21 @@ function FriendRow({ entry, myUsername, onRemove, onBlock, onInvite }: FriendRow
       </div>
 
       <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+        <button
+          className="btn-ghost"
+          style={{ fontSize:9, padding:'5px 12px', position:'relative' }}
+          onClick={() => onChat(entry.username, entry.displayName)}
+        >
+          CHAT
+          {unread > 0 && (
+            <span style={{
+              position:'absolute', top:-5, right:-5,
+              background:'var(--red)', color:'#fff',
+              borderRadius:99, fontSize:8, fontWeight:700,
+              padding:'1px 4px', lineHeight:'13px',
+            }}>{unread > 9 ? '9+' : unread}</span>
+          )}
+        </button>
         {entry.online && entry.roomId && (
           <button
             className="btn-neon"
@@ -178,6 +195,8 @@ function SectionHeader({ label, count }: { label: string; count: number }) {
 }
 
 // ── Main page ──────────────────────────────────────────────────────────────
+interface ChatMsg { id: number; from: string; fromDisplay?: string; to: string; body: string; createdAt: number; }
+
 export default function FriendsPage() {
   const router = useRouter();
   const [myUsername, setMyUsername] = useState('');
@@ -186,9 +205,16 @@ export default function FriendsPage() {
   const [searchQ, setSearchQ]       = useState('');
   const [searchResults, setSearchResults] = useState<FriendEntry[]>([]);
   const [searchBusy, setSearchBusy]  = useState(false);
-  const [tab, setTab]                = useState<'friends'|'search'|'blocked'>('friends');
+  const [tab, setTab]                = useState<'friends'|'search'|'blocked'|'chat'>('friends');
   const [toast, setToast]            = useState('');
   const [loading, setLoading]        = useState(true);
+  // ── Chat state ──────────────────────────────────────────────────────────
+  const [chatFriend, setChatFriend]         = useState<string|null>(null);
+  const [chatFriendDisplay, setChatFriendDisplay] = useState('');
+  const [chatMessages, setChatMessages]     = useState<ChatMsg[]>([]);
+  const [chatInput, setChatInput]           = useState('');
+  const [unread, setUnread]                 = useState<Record<string,number>>({});
+  const chatBottomRef                       = useRef<HTMLDivElement>(null);
   const toastRef = useRef<ReturnType<typeof setTimeout>>(null);
   const searchRef = useRef<ReturnType<typeof setTimeout>>(null);
 
@@ -219,6 +245,62 @@ export default function FriendsPage() {
     const iv = setInterval(loadFriends, 10000);
     return () => clearInterval(iv);
   }, [loadFriends]);
+
+  // Unread counts
+  useEffect(() => {
+    if (!myUsername) return;
+    const poll = () => fetch(`http://localhost:2567/chat/unread/${myUsername}`)
+      .then(r => r.json()).then(d => setUnread(d)).catch(() => {});
+    poll();
+    const iv = setInterval(poll, 12000);
+    return () => clearInterval(iv);
+  }, [myUsername]);
+
+  // Poll history when conversation open
+  useEffect(() => {
+    if (!chatFriend || !myUsername) return;
+    const poll = () => fetch(`http://localhost:2567/chat/history/${myUsername}/${chatFriend}`)
+      .then(r => r.json()).then(msgs => {
+        setChatMessages(msgs);
+        setUnread(prev => { const n = { ...prev }; delete n[chatFriend!]; return n; });
+      }).catch(() => {});
+    poll();
+    const iv = setInterval(poll, 5000);
+    return () => clearInterval(iv);
+  }, [chatFriend, myUsername]);
+
+  // Auto-scroll
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior:'smooth' });
+  }, [chatMessages]);
+
+  const openChat = useCallback((username: string, display: string) => {
+    setChatFriend(username);
+    setChatFriendDisplay(display);
+    setChatMessages([]);
+    setTab('chat');
+    setUnread(prev => { const n = { ...prev }; delete n[username]; return n; });
+  }, []);
+
+  const sendChat = useCallback(async () => {
+    const body = chatInput.trim();
+    if (!body || !chatFriend || !myUsername) return;
+    setChatInput('');
+    try {
+      const r = await fetch('http://localhost:2567/chat/send', {
+        method:'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({ from: myUsername, to: chatFriend, body }),
+      });
+      const saved = await r.json();
+      if (saved.ok) {
+        const msg: ChatMsg = { id: saved.id, from: myUsername, to: chatFriend, body, createdAt: saved.createdAt };
+        setChatMessages(prev => [...prev, msg]);
+      }
+    } catch { /* best effort */ }
+  }, [chatInput, chatFriend, myUsername]);
+
+  const totalUnread = Object.values(unread).reduce((a, b) => a + b, 0);
 
   // Debounced search
   useEffect(() => {
@@ -330,11 +412,12 @@ export default function FriendsPage() {
         </motion.div>
 
         {/* Tabs */}
-        <div style={{ display:'flex', gap:4, marginBottom:20 }}>
+        <div style={{ display:'flex', gap:4, marginBottom:20, flexWrap:'wrap' }}>
           {([
-            { key:'friends', label:'Friends', count: friends.friends.length },
-            { key:'search',  label:'Find People', count: 0 },
-            { key:'blocked', label:'Blocked', count: friends.blocked.length },
+            { key:'friends', label:'Friends',     count: friends.friends.length },
+            { key:'chat',    label:'Chat',         count: totalUnread },
+            { key:'search',  label:'Find People',  count: 0 },
+            { key:'blocked', label:'Blocked',      count: friends.blocked.length },
           ] as const).map(t => (
             <button
               key={t.key}
@@ -465,6 +548,8 @@ export default function FriendsPage() {
                       onRemove={handleRemove}
                       onBlock={handleBlock}
                       onInvite={handleInvite}
+                      onChat={openChat}
+                      unread={unread[f.username] ?? 0}
                     />
                   ))}
                 </AnimatePresence>
@@ -577,6 +662,130 @@ export default function FriendsPage() {
                 NO USERS FOUND<br />
                 <span style={{ fontSize:10, opacity:0.6 }}>Make sure you&apos;re searching by exact username.</span>
               </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Chat tab ── */}
+        {tab === 'chat' && (
+          <div className="game-card" style={{ overflow:'hidden', minHeight:480, display:'flex', flexDirection:'column' }}>
+            {!chatFriend ? (
+              /* Friend list */
+              <>
+                <SectionHeader label="Messages" count={friends.friends.length} />
+                {friends.friends.length === 0 ? (
+                  <div style={{ padding:'40px 24px', textAlign:'center',
+                    fontFamily:"'Space Mono',monospace", fontSize:11,
+                    color:'var(--dim)', letterSpacing:'0.1em' }}>
+                    NO FRIENDS TO CHAT WITH
+                  </div>
+                ) : friends.friends.map(f => (
+                  <button key={f.username}
+                    onClick={() => openChat(f.username, f.displayName)}
+                    style={{
+                      width:'100%', background:'none', border:'none', cursor:'pointer',
+                      display:'flex', alignItems:'center', gap:12,
+                      padding:'13px 16px', borderBottom:'1px solid var(--border)',
+                      transition:'background 0.12s', textAlign:'left',
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background='rgba(255,255,255,0.03)'}
+                    onMouseLeave={e => e.currentTarget.style.background='none'}
+                  >
+                    <AvatarChip name={f.displayName} />
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:14, fontWeight:600, color:'var(--text)' }}>{f.displayName}</div>
+                      <div style={{ fontFamily:"'Space Mono',monospace", fontSize:10, color:'var(--dim)', marginTop:2 }}>
+                        @{f.username}
+                      </div>
+                    </div>
+                    <OnlineBadge online={f.online} roomLabel={f.roomLabel} />
+                    {(unread[f.username] ?? 0) > 0 && (
+                      <span style={{
+                        background:'var(--red)', color:'#fff',
+                        borderRadius:99, fontSize:9, fontWeight:700, padding:'2px 7px',
+                      }}>{unread[f.username]}</span>
+                    )}
+                  </button>
+                ))}
+              </>
+            ) : (
+              /* Conversation */
+              <>
+                {/* Header */}
+                <div style={{
+                  display:'flex', alignItems:'center', gap:10,
+                  padding:'12px 16px', borderBottom:'1px solid var(--border)',
+                  flexShrink:0,
+                }}>
+                  <button onClick={() => { setChatFriend(null); setChatMessages([]); }}
+                    style={{ background:'none', border:'none', cursor:'pointer',
+                      color:'var(--muted)', fontSize:18, lineHeight:1, padding:'2px 6px' }}>
+                    ←
+                  </button>
+                  <AvatarChip name={chatFriendDisplay} size={28} />
+                  <span style={{ fontSize:14, fontWeight:600, color:'var(--text)' }}>{chatFriendDisplay}</span>
+                </div>
+
+                {/* Messages */}
+                <div style={{ flex:1, overflowY:'auto', padding:'16px',
+                  display:'flex', flexDirection:'column', gap:8, minHeight:300 }}>
+                  {chatMessages.length === 0 && (
+                    <div style={{ textAlign:'center', padding:'40px 0',
+                      fontFamily:"'Space Mono',monospace", fontSize:10,
+                      color:'var(--dim)', letterSpacing:'0.1em' }}>
+                      NO MESSAGES YET
+                    </div>
+                  )}
+                  {chatMessages.map(msg => {
+                    const isMe = msg.from === myUsername;
+                    return (
+                      <div key={msg.id} style={{ display:'flex', flexDirection:'column',
+                        alignItems: isMe ? 'flex-end' : 'flex-start' }}>
+                        <div style={{
+                          background: isMe ? 'rgba(167,139,250,0.16)' : 'rgba(255,255,255,0.06)',
+                          border: isMe ? '1px solid rgba(167,139,250,0.28)' : '1px solid rgba(255,255,255,0.08)',
+                          borderRadius: isMe ? '14px 14px 3px 14px' : '14px 14px 14px 3px',
+                          padding:'9px 14px', maxWidth:'68%',
+                          fontSize:13, color:'var(--text)', lineHeight:1.55,
+                          wordBreak:'break-word',
+                        }}>
+                          {msg.body}
+                        </div>
+                        <span style={{ fontSize:10, color:'var(--dim)', marginTop:3 }}>
+                          {new Date(msg.createdAt * 1000).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  <div ref={chatBottomRef} />
+                </div>
+
+                {/* Input */}
+                <div style={{ display:'flex', gap:8, padding:'12px 16px',
+                  borderTop:'1px solid var(--border)', flexShrink:0 }}>
+                  <input
+                    value={chatInput}
+                    onChange={e => setChatInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } }}
+                    placeholder={`Message ${chatFriendDisplay}…`}
+                    maxLength={500}
+                    autoFocus
+                    style={{
+                      flex:1, background:'rgba(255,255,255,0.04)',
+                      border:'1px solid var(--border)', borderRadius:8,
+                      padding:'10px 14px', fontSize:13, color:'var(--text)',
+                      outline:'none', fontFamily:'inherit',
+                    }}
+                    onFocus={e => e.target.style.borderColor='var(--border-hi)'}
+                    onBlur={e => e.target.style.borderColor='var(--border)'}
+                  />
+                  <button onClick={sendChat} disabled={!chatInput.trim()}
+                    className={chatInput.trim() ? 'btn-neon' : 'btn-ghost'}
+                    style={{ fontSize:13, padding:'0 18px', fontWeight:700 }}>
+                    →
+                  </button>
+                </div>
+              </>
             )}
           </div>
         )}

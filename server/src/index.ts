@@ -9,9 +9,10 @@ import {
   isUsernameTaken, searchUsers,
   getFriendList, sendFriendRequest, acceptFriendRequest,
   removeFriendOrRequest, blockUser, unblockUser,
-  areFriends,
+  areFriends, saveMessage, getMessages, markRead, getUnreadCounts,
 } from "./db";
 import { onlineUsers, pushInvite, popInvites } from "./online";
+import { chatSessions } from "./chatSessions";
 
 const PORT = 2567;
 const USERNAME_RE = /^[a-z0-9_]{3,20}$/;
@@ -171,6 +172,40 @@ app.post("/friends/invite", (req, res) => {
 
 app.get("/invites/:username", (req, res) => {
   res.json(popInvites(req.params.username));
+});
+
+// ── Chat ───────────────────────────────────────────────────────────────────
+app.get("/chat/history/:userA/:friend", (req, res) => {
+  const { userA, friend } = req.params;
+  if (!areFriends(userA, friend)) { res.status(403).json({ error: "Not friends" }); return; }
+  try {
+    markRead(userA.toLowerCase(), friend.toLowerCase());
+    res.json(getMessages(userA, friend));
+  } catch { res.status(500).json({ error: "query failed" }); }
+});
+
+app.get("/chat/unread/:username", (req, res) => {
+  try { res.json(getUnreadCounts(req.params.username.toLowerCase())); }
+  catch { res.status(500).json({ error: "query failed" }); }
+});
+
+app.post("/chat/send", (req, res) => {
+  const { from, to, body } = req.body ?? {};
+  if (typeof from !== "string" || typeof to !== "string" || typeof body !== "string" || !body.trim()) {
+    res.status(400).json({ error: "invalid params" }); return;
+  }
+  if (!areFriends(from.trim(), to.trim())) { res.status(403).json({ error: "Not friends" }); return; }
+  try {
+    const saved  = saveMessage(from.trim(), to.trim(), body.trim());
+    const fromUser = onlineUsers.get(from.trim().toLowerCase());
+    const packet = {
+      id: saved.id, from: from.trim(), fromDisplay: fromUser?.displayName ?? from.trim(),
+      to: to.trim(), body: body.trim(), createdAt: saved.createdAt,
+    };
+    const dest = chatSessions.get(to.trim().toLowerCase());
+    if (dest) dest.send("chatMsg", packet);
+    res.json({ ok: true, ...saved });
+  } catch { res.status(500).json({ error: "send failed" }); }
 });
 
 // ── Server ─────────────────────────────────────────────────────────────────

@@ -39,6 +39,17 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_sessions_user_week ON sessions(user_name, week);
   CREATE INDEX IF NOT EXISTS idx_friends_req        ON friendships(requester);
   CREATE INDEX IF NOT EXISTS idx_friends_addr       ON friendships(addressee);
+
+  CREATE TABLE IF NOT EXISTS messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_user  TEXT    NOT NULL,
+    to_user    TEXT    NOT NULL,
+    body       TEXT    NOT NULL,
+    read       INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  );
+  CREATE INDEX IF NOT EXISTS idx_msg_to   ON messages(to_user, created_at);
+  CREATE INDEX IF NOT EXISTS idx_msg_pair ON messages(from_user, to_user);
 `);
 
 // Migrate: add display_name if missing (old DB without it)
@@ -243,6 +254,49 @@ export function getProfile(username: string) {
     total_secs:    stats?.total_secs   ?? 0,
     session_count: stats?.session_count ?? 0,
   };
+}
+
+// ── Chat messages ──────────────────────────────────────────────────────────
+export function saveMessage(from: string, to: string, body: string): { id: number; createdAt: number } {
+  const lf = from.toLowerCase().trim();
+  const lt = to.toLowerCase().trim();
+  const info = db.prepare(
+    "INSERT INTO messages (from_user, to_user, body) VALUES (?, ?, ?)"
+  ).run(lf, lt, body.slice(0, 1000));
+  const row = db.prepare("SELECT id, created_at FROM messages WHERE id = ?").get(info.lastInsertRowid) as any;
+  return { id: row.id, createdAt: row.created_at };
+}
+
+export function getMessages(userA: string, userB: string, limit = 60) {
+  const la = userA.toLowerCase().trim();
+  const lb = userB.toLowerCase().trim();
+  const rows = db.prepare(`
+    SELECT id, from_user AS fromUser, to_user AS toUser, body, read, created_at AS createdAt
+    FROM messages
+    WHERE (from_user = ? AND to_user = ?) OR (from_user = ? AND to_user = ?)
+    ORDER BY created_at DESC, id DESC LIMIT ?
+  `).all(la, lb, lb, la, limit) as any[];
+  return rows.reverse();
+}
+
+export function markRead(toUser: string, fromUser: string) {
+  const lt = toUser.toLowerCase().trim();
+  const lf = fromUser.toLowerCase().trim();
+  db.prepare(
+    "UPDATE messages SET read = 1 WHERE to_user = ? AND from_user = ? AND read = 0"
+  ).run(lt, lf);
+}
+
+export function getUnreadCounts(username: string): Record<string, number> {
+  const u = username.toLowerCase().trim();
+  const rows = db.prepare(`
+    SELECT from_user AS fromUser, COUNT(*) AS cnt
+    FROM messages WHERE to_user = ? AND read = 0
+    GROUP BY from_user
+  `).all(u) as any[];
+  const out: Record<string, number> = {};
+  for (const r of rows) out[r.fromUser] = r.cnt;
+  return out;
 }
 
 export function updateProfile(
