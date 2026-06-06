@@ -39,6 +39,9 @@ interface ChatMessage {
 interface FriendEntry {
   username: string;
   displayName: string;
+  online?: boolean;
+  roomId?: string | null;
+  roomLabel?: string | null;
 }
 
 // ── Phaser game script (runs after CDN scripts load) ──────────────────────
@@ -54,8 +57,15 @@ const GAME_SCRIPT = `
 
   const MY_USERNAME = localStorage.getItem('sl_name') || 'guest';
   const MY_NAME     = localStorage.getItem('sl_display') || MY_USERNAME;
-  const MY_COLOR_HEX= localStorage.getItem('sl_color') || '#f59e0b';
-  const MY_COLOR_INT = parseInt(MY_COLOR_HEX.replace('#',''), 16);
+  function h2i(h){return parseInt((h||'f59e0b').replace('#',''),16);}
+  const MY_APP={
+    gender:localStorage.getItem('sl_gender')||'male',
+    skin:  h2i(localStorage.getItem('sl_skin')  ||'#f5c5a3'),
+    hair:  h2i(localStorage.getItem('sl_hair')  ||'#1a0a00'),
+    shirt: h2i(localStorage.getItem('sl_shirt') ||'#f59e0b'),
+    pants: h2i(localStorage.getItem('sl_pants') ||'#1e2a4a'),
+    shoes: h2i(localStorage.getItem('sl_shoes') ||'#1a1008'),
+  };
 
   // ── Wall layout (rooms separated by thick walls with doorway gaps) ───────
   // Zone boundary axes: VX1=296, VX2=1056, HY1=372, HY2=796, thickness=16
@@ -130,80 +140,204 @@ const GAME_SCRIPT = `
   function lig(c){ return(Math.min(255,(c>>16&0xff)+55)<<16)|(Math.min(255,(c>>8&0xff)+55)<<8)|Math.min(255,(c&0xff)+55); }
   function drk(c){ return(Math.max(0,(c>>16&0xff)-40)<<16)|(Math.max(0,(c>>8&0xff)-40)<<8)|Math.max(0,(c&0xff)-40); }
 
-  // ── Among Us bean character ───────────────────────────────────────────────
-  // sx,sy = container origin. Bean is drawn centred there.
-  function drawBean(g, col, dir, lp, isMe) {
+  // ── Top-down humanoid character (Machiavillain style) ────────────────────
+  function drawCharacter(g, app, dir, lp, isMe) {
     g.clear();
-    const hl=lig(col), dk=drk(col);
+    const hl=lig(app.shirt), dk=drk(app.shirt);
+    const skinDk=drk(app.skin);
+    const sw=Math.sin(lp);
 
     // Ground shadow
-    g.fillStyle(0x000000,0.2); g.fillEllipse(1,28,40,13);
+    g.fillStyle(0x000000,0.22);
+    g.fillEllipse(0,20,26,8);
 
-    // Backpack (opposite side from viewer)
-    g.fillStyle(dk,1);
-    if(dir==='right') g.fillEllipse(-16,3,13,21);
-    else              g.fillEllipse(16,3,13,21);
+    const isFemale=app.gender==='female';
 
-    // Main body oval
-    g.fillStyle(col,1); g.fillEllipse(0,2,32,44);
+    if(dir==='down'){
+      // Legs
+      g.fillStyle(app.pants,1);
+      g.fillEllipse(-6,13+sw*6,10,14);
+      g.fillEllipse( 6,13-sw*6,10,14);
+      // Shoes
+      g.fillStyle(app.shoes,1);
+      g.fillEllipse(-6,20+sw*6,10,6);
+      g.fillEllipse( 6,20-sw*6,10,6);
+      // Arms
+      g.fillStyle(app.shirt,1);
+      g.fillEllipse(-14,-1-sw*5,9,16);
+      g.fillEllipse( 14,-1+sw*5,9,16);
+      // Body torso
+      g.fillStyle(app.shirt,1);
+      g.fillRoundedRect(-10,-10,20,20,5);
+      g.fillStyle(hl,0.2);
+      g.fillRoundedRect(-8,-8,8,9,3);
+      // Neck
+      g.fillStyle(app.skin,1);
+      g.fillEllipse(0,-12,8,6);
+      // Head
+      g.fillStyle(app.skin,1);
+      g.fillCircle(0,-22,11);
+      // Hair — female: long flowing sides; male: short neat
+      g.fillStyle(app.hair,1);
+      if(isFemale){
+        g.fillEllipse( 0,-30,24,13);
+        g.fillEllipse(-12,-22,12,22);
+        g.fillEllipse( 12,-22,12,22);
+        g.fillEllipse( -8,-12, 8,10);
+        g.fillEllipse(  8,-12, 8,10);
+      } else {
+        g.fillEllipse( 0,-30,20,11);
+        g.fillEllipse(-9,-24, 7,12);
+        g.fillEllipse( 9,-24, 7,12);
+      }
+      // Eyes
+      g.fillStyle(0x1a0a00,1);
+      g.fillCircle(-4,-22,2.2);
+      g.fillCircle( 4,-22,2.2);
+      g.fillStyle(0xffffff,0.9);
+      g.fillCircle(-3,-23,1);
+      g.fillCircle( 5,-23,1);
 
-    // Highlight sheen
-    g.fillStyle(hl,0.25); g.fillEllipse(-7,-7,14,20);
+    } else if(dir==='up'){
+      // Legs
+      g.fillStyle(app.pants,1);
+      g.fillEllipse(-6,13+sw*6,10,14);
+      g.fillEllipse( 6,13-sw*6,10,14);
+      // Shoes
+      g.fillStyle(app.shoes,1);
+      g.fillEllipse(-6,20+sw*6,10,6);
+      g.fillEllipse( 6,20-sw*6,10,6);
+      // Arms (darker — back of arm)
+      g.fillStyle(dk,1);
+      g.fillEllipse(-14,-1-sw*5,9,16);
+      g.fillEllipse( 14,-1+sw*5,9,16);
+      // Body
+      g.fillStyle(app.shirt,1);
+      g.fillRoundedRect(-10,-10,20,20,5);
+      // Neck + head back
+      g.fillStyle(skinDk,1);
+      g.fillEllipse(0,-12,8,6);
+      g.fillCircle(0,-22,11);
+      // Hair
+      g.fillStyle(app.hair,1);
+      if(isFemale){
+        g.fillCircle(0,-24,13);
+        g.fillEllipse(-12,-20,12,22);
+        g.fillEllipse( 12,-20,12,22);
+        g.fillEllipse( -7,-10, 8,12);
+        g.fillEllipse(  7,-10, 8,12);
+      } else {
+        g.fillCircle(0,-24,12);
+        g.fillEllipse(-9,-22,8,13);
+        g.fillEllipse( 9,-22,8,13);
+      }
 
-    // Visor (direction-aware)
-    if(dir==='up'){
-      g.fillStyle(dk,0.28); g.fillEllipse(0,-16,24,10);
-    } else if(dir==='left'){
-      g.fillStyle(0x0d1117,1); g.fillEllipse(-3,-14,22,16);
-      g.fillStyle(0x7dd3fc,0.38); g.fillEllipse(-7,-18,10,7);
-    } else if(dir==='right'){
-      g.fillStyle(0x0d1117,1); g.fillEllipse(3,-14,22,16);
-      g.fillStyle(0x7dd3fc,0.38); g.fillEllipse(7,-18,10,7);
     } else {
-      g.fillStyle(0x0d1117,1); g.fillEllipse(0,-14,24,16);
-      g.fillStyle(0x7dd3fc,0.36); g.fillEllipse(-3,-18,11,7);
+      const f=dir==='right'?1:-1;
+      // Far arm behind body
+      g.fillStyle(dk,1);
+      g.fillEllipse(-f*10,-1+sw*5,8,15);
+      // Legs
+      g.fillStyle(app.pants,1);
+      g.fillEllipse(-5,13+sw*6,10,14);
+      g.fillEllipse( 5,13-sw*6,10,14);
+      // Shoes
+      g.fillStyle(app.shoes,1);
+      g.fillEllipse(-5+f*2,20+sw*6,10,6);
+      g.fillEllipse( 5+f*2,20-sw*6,10,6);
+      // Body oval
+      g.fillStyle(app.shirt,1);
+      g.fillEllipse(f*1,0,18,22);
+      g.fillStyle(hl,0.2);
+      g.fillEllipse(-f*3,-4,7,9);
+      // Near arm in front
+      g.fillStyle(app.shirt,1);
+      g.fillEllipse(f*12,-1-sw*5,8,15);
+      // Neck + head
+      g.fillStyle(app.skin,1);
+      g.fillEllipse(f*2,-12,7,6);
+      g.fillCircle(f*2,-22,11);
+      // Hair
+      g.fillStyle(app.hair,1);
+      if(isFemale){
+        g.fillEllipse(  0,-30,18,12);
+        g.fillEllipse( f*9,-23,10,18);
+        g.fillEllipse(-f*9,-23, 8,14);
+        g.fillEllipse( f*6,-12, 7,12);
+      } else {
+        g.fillEllipse(  0,-30,16,11);
+        g.fillEllipse( f*8,-23, 7,12);
+        g.fillEllipse(-f*8,-23, 6,12);
+      }
+      // One visible eye
+      g.fillStyle(0x1a0a00,1);
+      g.fillCircle(f*4,-22,2);
+      g.fillStyle(0xffffff,0.9);
+      g.fillCircle(f*5,-23,1);
     }
 
-    // Gold outline for local player
-    if(isMe){ g.lineStyle(3,0xf59e0b,0.92); g.strokeEllipse(0,2,34,46); }
-
-    // Legs with walk cycle
-    g.fillStyle(col,1);
-    g.fillEllipse(-9, 28+Math.sin(lp)*7,  13,18);
-    g.fillEllipse( 9, 28-Math.sin(lp)*7,  13,18);
-    g.fillStyle(dk,0.28);
-    g.fillEllipse(-9, 33+Math.sin(lp)*7,  11,9);
-    g.fillEllipse( 9, 33-Math.sin(lp)*7,  11,9);
+    // Gold ring around head for local player
+    if(isMe){
+      g.lineStyle(2.5,0xf59e0b,0.9);
+      g.strokeCircle(0,-22,14);
+    }
   }
 
-  function makeChar(scene, x, y, col, name, isMe) {
+  function makeChar(scene, x, y, app, name, isMe) {
     const con=scene.add.container(x,y).setDepth(isMe?15:8);
 
     const g=scene.add.graphics();
-    drawBean(g,col,'down',0,isMe);
+    drawCharacter(g,app,'down',0,isMe);
     con.add(g);
 
+    // Name tag — positioned above head (head top ≈ y=-36)
     const nm=isMe?'▸ '+name:name;
     const nw=Math.min(Math.max(nm.length*6+14,50),145);
     const nbg=scene.add.graphics();
-    nbg.fillStyle(0x000000,0.75); nbg.fillRoundedRect(-nw/2,-60,nw,17,4);
+    nbg.fillStyle(0x1a1008,0.88); nbg.fillRoundedRect(-nw/2,-64,nw,17,4);
+    // Parchment-style border
+    nbg.lineStyle(1,0x7c4a1e,0.7); nbg.strokeRoundedRect(-nw/2,-64,nw,17,4);
     con.add(nbg);
-    con.add(scene.add.text(0,-51,nm,{
+    con.add(scene.add.text(0,-55,nm,{
       fontFamily:"'Space Mono',monospace",fontSize:'9px',
-      color:isMe?'#f59e0b':'#e2e8f0',
+      color:isMe?'#f5c842':'#e8d5b0',
     }).setOrigin(0.5,1));
 
+    // Status dot
     const dot=scene.add.graphics();
-    dot.fillStyle(0x64748b,0.9); dot.fillCircle(0,-68,4);
+    dot.fillStyle(0x64748b,0.7); dot.fillCircle(0,-70,4);
     con.add(dot);
 
-    return {con,g,dot,dir:'down',lp:0,col,lastDir:'_'};
+    // Timer text (above name tag)
+    const timerTxt=scene.add.text(0,-68,'',{
+      fontFamily:"'Space Mono',monospace",fontSize:'8px',
+      color:'#a78bfa',backgroundColor:'#1a100899',
+      padding:{x:4,y:2},
+    }).setOrigin(0.5,1).setVisible(false);
+    con.add(timerTxt);
+
+    return {con,g,dot,timerTxt,dir:'down',lp:0,app,lastDir:'_'};
   }
 
-  function setDot(dot,ps){
+  function setDot(dot, ps){
     dot.clear();
-    dot.fillStyle(ps==='studying'?0xa78bfa:ps==='browsing'?0xfb923c:0x64748b,0.9);
-    dot.fillCircle(0,-68,4);
+    if(ps==='studying'){
+      // Purple dot + tiny book lines
+      dot.fillStyle(0xa78bfa,0.95); dot.fillCircle(0,-70,5);
+      dot.lineStyle(1,0xffffff,0.65);
+      dot.strokeRect(-3,-74,6,8);
+      dot.lineBetween(0,-74,0,-66);
+    } else if(ps==='paused'){
+      // Amber dot + pause bars
+      dot.fillStyle(0xf59e0b,0.95); dot.fillCircle(0,-70,5);
+      dot.fillStyle(0xffffff,0.9);
+      dot.fillRect(-3,-73,2,6);
+      dot.fillRect(1,-73,2,6);
+    } else if(ps==='browsing'){
+      dot.fillStyle(0xfb923c,0.95); dot.fillCircle(0,-70,5);
+    } else {
+      dot.fillStyle(0x64748b,0.7); dot.fillCircle(0,-70,4);
+    }
   }
 
   // ── Map: floors, walls, furniture, labels ─────────────────────────────────
@@ -463,6 +597,8 @@ const GAME_SCRIPT = `
         left:Phaser.Input.Keyboard.KeyCodes.A,right:Phaser.Input.Keyboard.KeyCodes.D,
       });
       this.eKey=this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
+      // Don't intercept keys when a browser input/textarea is focused
+      this.input.keyboard.disableGlobalCapture();
 
       window.__gameScene=this;
       window.addEventListener('sl:openPanel',  ()=>this.panelOpen=true);
@@ -474,7 +610,9 @@ const GAME_SCRIPT = `
       const roomId=localStorage.getItem('sl_roomId');
       const client=new Colyseus.Client('${SERVER_WS}');
       try{
-        const opts={username:MY_USERNAME,displayName:MY_NAME};
+        const opts={username:MY_USERNAME,displayName:MY_NAME,
+          gender:MY_APP.gender,skinColor:MY_APP.skin,hairColor:MY_APP.hair,
+          shirtColor:MY_APP.shirt,pantsColor:MY_APP.pants,shoesColor:MY_APP.shoes};
         this.room=roomId?await client.joinById(roomId,opts):await client.joinOrCreate('library',opts);
       }catch{
         emit('connError',{msg:'Connection failed — is the server running?'});
@@ -491,7 +629,7 @@ const GAME_SCRIPT = `
       this.room.state.players.onAdd((player,sid)=>{
         const sx=player.x||SPAWN_X, sy=player.y||SPAWN_Y;
         if(sid===this.mySessionId){
-          const ch=makeChar(this,sx,sy,MY_COLOR_INT,MY_NAME,true);
+          const ch=makeChar(this,sx,sy,MY_APP,MY_NAME,true);
           this.cameras.main.startFollow(ch.con,true,0.1,0.1);
           this.me={...ch,x:sx,y:sy,moving:false,
             sessionSeconds:0,pstate:'idle',sessionLeft:0,seatId:-1,idleSince:0};
@@ -511,7 +649,10 @@ const GAME_SCRIPT = `
               sessionSeconds:this.me.sessionSeconds,seatId:this.me.seatId,idleSince:this.me.idleSince});
           });
         } else {
-          const ch=makeChar(this,sx,sy,0xfb923c,player.name||sid.slice(0,8),false);
+          const rApp={gender:player.gender||'male',skin:player.skin||0xf5c5a3,
+            hair:player.hair||0x1a0a00,shirt:player.shirt||0xfb923c,
+            pants:player.pants||0x1e2a4a,shoes:player.shoes||0x1a1008};
+          const ch=makeChar(this,sx,sy,rApp,player.name||sid.slice(0,8),false);
           const e={...ch,name:player.name||sid.slice(0,8),x:sx,y:sy,
             targetX:sx,targetY:sy,sessionSeconds:player.sessionSeconds,
             sessionLeft:player.sessionLeft,pstate:player.pstate,seatId:player.seatId};
@@ -538,6 +679,7 @@ const GAME_SCRIPT = `
       // Chat relay: server → React
       this.room.onMessage('chatMsg',    data=>emit('chatMsg',    data));
       this.room.onMessage('chatHistory',data=>emit('chatHistory',data));
+      this.room.onMessage('invite',     data=>emit('invite',     data));
 
       // Chat relay: React → server
       window.addEventListener('sl:chatSend',       e=>{ if(this.room) this.room.send('chatSend',{to:e.detail.to,body:e.detail.body}); });
@@ -559,7 +701,9 @@ const GAME_SCRIPT = `
       const studying=this.me.pstate==='studying';
 
       // ── Movement with wall collision + sliding ────────────────────────
-      if(!studying&&!this.panelOpen){
+      const tag=(document.activeElement?.tagName||'');
+      const inputFocused=tag==='INPUT'||tag==='TEXTAREA';
+      if(!studying&&!this.panelOpen&&!inputFocused){
         const L=this.cursors.left.isDown||this.wasd.left.isDown;
         const R=this.cursors.right.isDown||this.wasd.right.isDown;
         const U=this.cursors.up.isDown||this.wasd.up.isDown;
@@ -580,7 +724,7 @@ const GAME_SCRIPT = `
         // Animate bean when moving
         if(moving) this.me.lp+=delta*0.007;
         if(moving||this.me.dir!==this.me.lastDir){
-          drawBean(this.me.g,this.me.col,this.me.dir,moving?this.me.lp:0,true);
+          drawCharacter(this.me.g,this.me.app,this.me.dir,moving?this.me.lp:0,true);
           this.me.lastDir=this.me.dir;
         }
       }
@@ -602,7 +746,7 @@ const GAME_SCRIPT = `
         const rMov=dist(r.x,r.y,r.targetX,r.targetY)>1.5;
         if(rMov) r.lp+=delta*0.007;
         if(rMov||r.dir!==r.lastDir){
-          drawBean(r.g,r.col,r.dir,rMov?r.lp:0,false);
+          drawCharacter(r.g,r.app,r.dir,rMov?r.lp:0,false);
           r.lastDir=r.dir;
         }
       }
@@ -645,6 +789,26 @@ const GAME_SCRIPT = `
         if(this.me)emit('stateChange',{pstate:this.me.pstate,sessionLeft:this.me.sessionLeft,
           sessionSeconds:this.me.sessionSeconds,seatId:this.me.seatId,idleSince:this.me.idleSince});
         this._emitPlayers();
+
+        // Update timer text above characters
+        const fmtLeft=(s)=>{const m=Math.floor(s/60),sc=s%60;return m>0?(m+'m '+String(sc).padStart(2,'0')+'s'):(sc+'s');};
+        if(this.me?.timerTxt){
+          const show=this.me.pstate==='studying'||this.me.pstate==='paused';
+          this.me.timerTxt.setVisible(show);
+          if(show){
+            this.me.timerTxt.setText(fmtLeft(this.me.sessionLeft));
+            this.me.timerTxt.setColor(this.me.pstate==='paused'?'#fb923c':this.me.sessionLeft<300?'#ef4444':this.me.sessionLeft<900?'#f59e0b':'#a78bfa');
+          }
+        }
+        this.remotes.forEach(r=>{
+          if(!r.timerTxt)return;
+          const show=r.pstate==='studying'||r.pstate==='paused';
+          r.timerTxt.setVisible(show);
+          if(show){
+            r.timerTxt.setText(fmtLeft(r.sessionLeft));
+            r.timerTxt.setColor(r.pstate==='paused'?'#fb923c':r.sessionLeft<300?'#ef4444':r.sessionLeft<900?'#f59e0b':'#a78bfa');
+          }
+        });
       }
 
       // ── Minimap player dots ───────────────────────────────────────────
@@ -653,11 +817,11 @@ const GAME_SCRIPT = `
         this.mmDots.clear();
         // other players
         this.remotes.forEach(r=>{
-          this.mmDots.fillStyle(r.col,0.85);
+          this.mmDots.fillStyle((r.app&&r.app.shirt)||0xfb923c,0.85);
           this.mmDots.fillCircle(MMX+r.x*SX,MMY+r.y*SY,3);
         });
         // me (on top, larger)
-        this.mmDots.fillStyle(MY_COLOR_INT,1);
+        this.mmDots.fillStyle(MY_APP.shirt,1);
         this.mmDots.fillCircle(MMX+this.me.x*SX,MMY+this.me.y*SY,4.5);
         this.mmDots.lineStyle(1.5,0xffffff,0.7);
         this.mmDots.strokeCircle(MMX+this.me.x*SX,MMY+this.me.y*SY,4.5);
@@ -684,7 +848,7 @@ const GAME_SCRIPT = `
     type:Phaser.AUTO, width:VIEW_W, height:VIEW_H,
     parent:'phaser-container', backgroundColor:'#1c0f04',
     scene:GameScene,
-    scale:{mode:Phaser.Scale.FIT,autoCenter:Phaser.Scale.CENTER_BOTH},
+    scale:{mode:Phaser.Scale.RESIZE,autoCenter:Phaser.Scale.CENTER_BOTH},
   });
 })();
 `;
@@ -694,6 +858,8 @@ export default function GamePage() {
   const router = useRouter();
   const [scriptsReady, setScriptsReady]     = useState(0); // count loaded
   const [connected, setConnected]           = useState(false);
+  const [myRoomId, setMyRoomId]             = useState<string|null>(null);
+  const [inviteToast, setInviteToast]       = useState('');
   const [connErr, setConnErr]               = useState('');
   const [gameState, setGameState]           = useState<GameState>({ pstate:'idle', sessionLeft:0, sessionSeconds:0, seatId:-1, idleSince:0 });
   const [proximity, setProximity]           = useState({ nearKiosk:false, nearSeatId:-1, pstate:'idle' });
@@ -760,7 +926,7 @@ export default function GamePage() {
     };
 
     const offs = [
-      on('connected',   (e: CustomEvent) => setConnected(true)),
+      on('connected',   (e: CustomEvent) => { setConnected(true); setMyRoomId(e.detail.roomId ?? null); }),
       on('connError',   (e: CustomEvent) => setConnErr(e.detail.msg)),
       on('stateChange', (e: CustomEvent) => setGameState(e.detail)),
       on('proximity',   (e: CustomEvent) => setProximity(e.detail)),
@@ -769,6 +935,13 @@ export default function GamePage() {
       on('kicked',      () => setShowKicked(true)),
       on('sessionEnd',  () => { setShowPanel(false); window.dispatchEvent(new CustomEvent('sl:closePanel')); }),
       on('actionError', (e: CustomEvent) => { setHudMsg(e.detail.message); setTimeout(() => setHudMsg(''), 2500); }),
+      on('invite', (e: CustomEvent) => {
+        const inv = e.detail;
+        setInvites(prev => {
+          const exists = prev.some(i => i.from === inv.from && i.roomId === inv.roomId);
+          return exists ? prev : [...prev, inv];
+        });
+      }),
     ];
 
     return () => offs.forEach(f => f());
@@ -815,14 +988,37 @@ export default function GamePage() {
     window.dispatchEvent(new CustomEvent('sl:resumeSession'));
   }, []);
 
-  // Fetch friend list on mount / username change
+  // Fetch friend list (with online status) — refresh every 20s
   useEffect(() => {
     if (!myUsername) return;
-    fetch(`http://localhost:2567/friends/${myUsername}`)
+    const load = () => fetch(`http://localhost:2567/friends/${myUsername}`)
       .then(r => r.json())
       .then(d => setFriends(d.friends ?? []))
       .catch(() => {});
+    load();
+    const iv = setInterval(load, 20000);
+    return () => clearInterval(iv);
   }, [myUsername]);
+
+  const sendInvite = useCallback(async (toUsername: string) => {
+    if (!myRoomId || !myUsername) return;
+    try {
+      const r = await fetch('http://localhost:2567/friends/invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: myUsername, to: toUsername, roomId: myRoomId }),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        setInviteToast(`Invite sent!`);
+      } else {
+        setInviteToast(d.error ?? 'Could not send invite');
+      }
+    } catch {
+      setInviteToast('Network error');
+    }
+    setTimeout(() => setInviteToast(''), 2500);
+  }, [myRoomId, myUsername]);
 
   // Fetch initial unread counts
   useEffect(() => {
@@ -840,13 +1036,14 @@ export default function GamePage() {
   useEffect(() => {
     const handler = (e: CustomEvent) => {
       const msg: ChatMessage = e.detail;
-      const key = msg.from === myUsername ? msg.to : msg.from;
+      const meL = myUsername.toLowerCase();
+      const key = msg.from.toLowerCase() === meL ? msg.to : msg.from;
       setChatMessages(prev => {
         const next = new Map(prev);
         next.set(key, [...(next.get(key) ?? []), msg]);
         return next;
       });
-      if (msg.from !== myUsername) {
+      if (msg.from.toLowerCase() !== meL) {
         setUnread(prev => ({ ...prev, [msg.from]: (prev[msg.from] ?? 0) + 1 }));
       }
     };
@@ -916,7 +1113,7 @@ export default function GamePage() {
   const sortedPlayers = [...players].sort((a,b) => b.sessionSeconds - a.sessionSeconds);
 
   return (
-    <div style={{ display:'flex', flexDirection:'column', minHeight:'100vh' }}>
+    <div style={{ display:'flex', flexDirection:'column', height:'100vh', overflow:'hidden' }}>
       {/* CDN scripts */}
       <Script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js" strategy="afterInteractive" onLoad={() => setScriptsReady(p => p+1)} />
       <Script src="https://unpkg.com/colyseus.js@0.15.0/dist/colyseus.js" strategy="afterInteractive" onLoad={() => setScriptsReady(p => p+1)} />
@@ -1040,18 +1237,17 @@ export default function GamePage() {
       {/* ── Game row ── */}
       <div style={{
         display:'flex',
-        gap:12,
-        alignItems:'flex-start',
-        padding:'0 28px 24px',
+        gap:0,
+        alignItems:'stretch',
         flex:1,
+        minHeight:0,
+        overflow:'hidden',
       }}>
         {/* Phaser canvas container */}
         <div id="phaser-container" style={{
-          width:800, height:600, flexShrink:0,
-          border:'1px solid var(--border)',
-          borderRadius:4,
+          flex:1, minWidth:0,
           overflow:'hidden',
-          background:'#1b3028',
+          background:'#1c0f04',
         }} />
 
         {/* ── Right panel: Board / Chat tabs ── */}
@@ -1060,11 +1256,9 @@ export default function GamePage() {
           animate={{ opacity:1, x:0 }}
           transition={{ duration:0.3, delay:0.2 }}
           style={{
-            width:234, flexShrink:0,
-            height:600,
+            width:240, flexShrink:0,
             background:'var(--card)',
-            border:'1px solid var(--border)',
-            borderRadius:8,
+            borderLeft:'1px solid var(--border)',
             display:'flex', flexDirection:'column',
             overflow:'hidden',
             position:'relative',
@@ -1167,46 +1361,90 @@ export default function GamePage() {
                     NO FRIENDS YET<br />
                     <Link href="/friends" style={{ color:'var(--accent)', fontSize:9 }}>ADD FRIENDS →</Link>
                   </div>
-                ) : friends.map(f => (
-                  <button key={f.username}
-                    onClick={() => openChat(f.username, f.displayName)}
-                    style={{
-                      width:'100%', background:'none', border:'none', cursor:'pointer',
-                      display:'flex', alignItems:'center', gap:9,
-                      padding:'9px 12px',
+                ) : friends.map(f => {
+                  const alreadyHere = f.roomId === myRoomId && !!myRoomId;
+                  return (
+                    <div key={f.username} style={{
+                      display:'flex', alignItems:'center', gap:8,
+                      padding:'8px 10px',
                       borderBottom:'1px solid rgba(255,255,255,0.04)',
-                      transition:'background 0.12s',
-                    }}
-                    onMouseEnter={e => (e.currentTarget.style.background='rgba(255,255,255,0.04)')}
-                    onMouseLeave={e => (e.currentTarget.style.background='none')}
-                  >
-                    <div style={{
-                      width:30, height:30, borderRadius:'50%', flexShrink:0,
-                      background:'var(--card-hover)',
-                      display:'flex', alignItems:'center', justifyContent:'center',
-                      fontSize:13, fontWeight:700, color:'var(--accent)',
-                    }}>{f.displayName[0]?.toUpperCase()}</div>
-                    <div style={{ flex:1, minWidth:0, textAlign:'left' }}>
-                      <div style={{ fontSize:12, fontWeight:600, color:'var(--text)',
-                        whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
-                        {f.displayName}
+                    }}>
+                      {/* Avatar + online dot */}
+                      <div style={{ position:'relative', flexShrink:0 }}>
+                        <div style={{
+                          width:30, height:30, borderRadius:'50%',
+                          background:'rgba(245,158,11,0.1)',
+                          border:'1px solid rgba(245,158,11,0.18)',
+                          display:'flex', alignItems:'center', justifyContent:'center',
+                          fontSize:13, fontWeight:700, color:'var(--accent)',
+                        }}>{f.displayName[0]?.toUpperCase()}</div>
+                        {f.online && (
+                          <span style={{
+                            position:'absolute', bottom:0, right:0,
+                            width:8, height:8, borderRadius:'50%',
+                            background: alreadyHere ? '#a78bfa' : '#22c55e',
+                            border:'1.5px solid var(--card)',
+                          }} />
+                        )}
                       </div>
-                      {(chatMessages.get(f.username)?.at(-1)) && (
-                        <div style={{ fontSize:10, color:'var(--dim)', marginTop:1,
+
+                      {/* Name + last msg — clicking opens chat */}
+                      <button onClick={() => openChat(f.username, f.displayName)}
+                        style={{
+                          flex:1, minWidth:0, background:'none', border:'none',
+                          cursor:'pointer', textAlign:'left', padding:0,
+                        }}>
+                        <div style={{ fontSize:11, fontWeight:600, color:'var(--text)',
                           whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
-                          {chatMessages.get(f.username)!.at(-1)!.body}
+                          {f.displayName}
                         </div>
+                        <div style={{ fontSize:9, color: alreadyHere ? '#a78bfa' : f.online ? '#22c55e' : 'var(--dim)',
+                          fontFamily:"'Space Mono',monospace", marginTop:1 }}>
+                          {alreadyHere ? 'in this room' : f.online ? `in ${f.roomLabel ?? 'library'}` : 'offline'}
+                        </div>
+                      </button>
+
+                      {/* Unread badge */}
+                      {(unread[f.username] ?? 0) > 0 && (
+                        <span style={{
+                          background:'var(--red)', color:'#fff',
+                          borderRadius:99, fontSize:8, fontWeight:700,
+                          padding:'1px 5px', flexShrink:0,
+                        }}>{unread[f.username]}</span>
+                      )}
+
+                      {/* Invite button */}
+                      {myRoomId && !alreadyHere && (
+                        <button
+                          onClick={() => sendInvite(f.username)}
+                          title={`Invite ${f.displayName} to this room`}
+                          style={{
+                            flexShrink:0,
+                            background:'rgba(245,158,11,0.12)',
+                            border:'1px solid rgba(245,158,11,0.3)',
+                            borderRadius:5, cursor:'pointer',
+                            padding:'3px 7px',
+                            fontFamily:"'Space Mono',monospace",
+                            fontSize:8, color:'var(--accent)',
+                            letterSpacing:'0.05em',
+                            transition:'background 0.15s',
+                          }}
+                          onMouseEnter={e => e.currentTarget.style.background='rgba(245,158,11,0.22)'}
+                          onMouseLeave={e => e.currentTarget.style.background='rgba(245,158,11,0.12)'}
+                        >
+                          INVITE
+                        </button>
+                      )}
+                      {alreadyHere && (
+                        <span style={{
+                          flexShrink:0, fontSize:8,
+                          fontFamily:"'Space Mono',monospace",
+                          color:'#a78bfa', letterSpacing:'0.05em',
+                        }}>HERE</span>
                       )}
                     </div>
-                    {(unread[f.username] ?? 0) > 0 && (
-                      <span style={{
-                        background:'var(--red)', color:'#fff',
-                        borderRadius:99, fontSize:9, fontWeight:700,
-                        padding:'2px 6px', flexShrink:0,
-                      }}>{unread[f.username]}</span>
-                    )}
-                  </button>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               /* Message thread */
@@ -1229,24 +1467,31 @@ export default function GamePage() {
                 <div style={{ flex:1, overflowY:'auto', padding:'8px 10px',
                   display:'flex', flexDirection:'column', gap:6 }}>
                   {(chatMessages.get(chatFriend) ?? []).map(msg => {
-                    const isMe = msg.from === myUsername;
+                    const isMe = msg.from.toLowerCase() === myUsername.toLowerCase();
                     return (
                       <div key={msg.id} style={{
                         display:'flex', flexDirection:'column',
-                        alignItems: isMe ? 'flex-end' : 'flex-start',
+                        alignItems: isMe ? 'flex-end' : 'flex-start', gap:2,
                       }}>
+                        <span style={{
+                          fontSize:9, fontWeight:700,
+                          color: isMe ? '#a78bfa' : '#fbbf24',
+                          fontFamily:"'Space Mono',monospace",
+                        }}>
+                          {isMe ? 'You' : chatFriendDisplay}
+                        </span>
                         <div style={{
-                          background: isMe ? 'rgba(167,139,250,0.18)' : 'rgba(255,255,255,0.06)',
-                          border: isMe ? '1px solid rgba(167,139,250,0.3)' : '1px solid rgba(255,255,255,0.08)',
-                          borderRadius: isMe ? '12px 12px 3px 12px' : '12px 12px 12px 3px',
-                          padding:'6px 10px',
-                          maxWidth:'85%',
-                          fontSize:12, color:'var(--text)', lineHeight:1.5,
-                          wordBreak:'break-word',
+                          background: isMe ? 'rgba(167,139,250,0.2)' : 'rgba(245,158,11,0.14)',
+                          border: isMe ? '1px solid rgba(167,139,250,0.38)' : '1px solid rgba(245,158,11,0.3)',
+                          borderRadius: isMe ? '11px 11px 3px 11px' : '11px 11px 11px 3px',
+                          padding:'6px 10px', maxWidth:'85%',
+                          fontSize:12,
+                          color: isMe ? '#ddd6fe' : '#fde68a',
+                          lineHeight:1.5, wordBreak:'break-word',
                         }}>
                           {msg.body}
                         </div>
-                        <span style={{ fontSize:9, color:'var(--dim)', marginTop:2 }}>
+                        <span style={{ fontSize:9, color:'var(--dim)' }}>
                           {new Date(msg.createdAt * 1000).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}
                         </span>
                       </div>
@@ -1432,9 +1677,11 @@ export default function GamePage() {
                   className="btn-neon"
                   style={{ flex:1, justifyContent:'center', fontSize:10, padding:'7px 0' }}
                   onClick={() => {
+                    // Leave current Colyseus room cleanly before switching
+                    try { (window as any).__gameScene?.room?.leave(); } catch {}
                     localStorage.setItem('sl_roomId', inv.roomId);
-                    router.push('/game');
-                    setInvites([]);
+                    // Full reload so Phaser + Colyseus reinitialise into the invited room
+                    window.location.href = '/game';
                   }}
                 >
                   JOIN →
@@ -1451,6 +1698,26 @@ export default function GamePage() {
           ))}
         </AnimatePresence>
       </div>
+
+      {/* ── Invite toast ── */}
+      <AnimatePresence>
+        {inviteToast && (
+          <motion.div
+            initial={{ opacity:0, y:12 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0, y:12 }}
+            style={{
+              position:'fixed', bottom:28, left:'50%', transform:'translateX(-50%)',
+              background:'rgba(245,158,11,0.12)', border:'1px solid rgba(245,158,11,0.35)',
+              borderRadius:8, padding:'10px 22px',
+              fontFamily:"'Space Mono',monospace", fontSize:12,
+              color:'var(--accent)', letterSpacing:'0.06em', zIndex:400,
+              whiteSpace:'nowrap',
+              pointerEvents:'none',
+            }}
+          >
+            {inviteToast}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── Kicked overlay ── */}
       <AnimatePresence>

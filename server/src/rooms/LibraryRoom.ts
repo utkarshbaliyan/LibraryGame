@@ -9,7 +9,10 @@ interface BuyMessage      { minutes: number; }
 interface SitDownMessage  { seatId: number; }
 interface ChatSendMessage { to: string; body: string; }
 interface ChatHistoryMsg  { friend: string; }
-interface JoinOptions     { username?: string; displayName?: string; label?: string; isGlobal?: boolean; createdBy?: string; }
+interface JoinOptions {
+  username?: string; displayName?: string; label?: string; isGlobal?: boolean; createdBy?: string;
+  gender?: string; skinColor?: number; hairColor?: number; shirtColor?: number; pantsColor?: number; shoesColor?: number;
+}
 
 const VALID_DURATIONS = new Set([30, 45, 60, 90, 120, 150, 180, 210]);
 const IDLE_KICK_SECS  = 60;
@@ -192,12 +195,18 @@ export class LibraryRoom extends Room<LibraryState> {
     p.sessionSeconds  = 0;
     p.pstate          = "idle";
     p.idleSince       = Math.floor(Date.now() / 1000);
+    p.gender = typeof options?.gender    === "string" ? options.gender    : "male";
+    p.skin   = typeof options?.skinColor  === "number" ? options.skinColor  : 0xf5c5a3;
+    p.hair   = typeof options?.hairColor  === "number" ? options.hairColor  : 0x1a0a00;
+    p.shirt  = typeof options?.shirtColor === "number" ? options.shirtColor : 0xf59e0b;
+    p.pants  = typeof options?.pantsColor === "number" ? options.pantsColor : 0x1e2a4a;
+    p.shoes  = typeof options?.shoesColor === "number" ? options.shoesColor : 0x1a1008;
     this.state.players.set(client.sessionId, p);
 
     try { ensureUser(username, displayName); } catch { }
 
-    // Track chat routing
-    chatSessions.set(username, client);
+    // Track chat routing (always lowercase key for consistent lookup)
+    chatSessions.set(username.toLowerCase(), client);
 
     // Track online presence
     onlineUsers.set(username, {
@@ -213,7 +222,7 @@ export class LibraryRoom extends Room<LibraryState> {
   onLeave(client: Client) {
     const p = this.state.players.get(client.sessionId);
     if (p) {
-      chatSessions.delete(p.username);
+      chatSessions.delete(p.username.toLowerCase());
       if (p.seatId >= 0) this.takenSeats.delete(p.seatId);
       if ((p.pstate === "studying" || p.pstate === "paused") && p.sessionMins > 0) {
         const frozenLeft  = this.pausedLeft.get(client.sessionId) ?? p.sessionLeft;

@@ -48,12 +48,11 @@ interface FriendRowProps {
   myUsername: string;
   onRemove: (u: string) => void;
   onBlock:  (u: string) => void;
-  onInvite: (u: string) => void;
   onChat:   (u: string, display: string) => void;
   unread?: number;
 }
 
-function FriendRow({ entry, myUsername, onRemove, onBlock, onInvite, onChat, unread = 0 }: FriendRowProps) {
+function FriendRow({ entry, myUsername, onRemove, onBlock, onChat, unread = 0 }: FriendRowProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -105,15 +104,6 @@ function FriendRow({ entry, myUsername, onRemove, onBlock, onInvite, onChat, unr
             }}>{unread > 9 ? '9+' : unread}</span>
           )}
         </button>
-        {entry.online && entry.roomId && (
-          <button
-            className="btn-neon"
-            style={{ fontSize:9, padding:'5px 12px' }}
-            onClick={() => onInvite(entry.username)}
-          >
-            INVITE
-          </button>
-        )}
 
         {/* Kebab menu */}
         <div style={{ position:'relative' }} ref={menuRef}>
@@ -385,7 +375,7 @@ export default function FriendsPage() {
 
   return (
     <>
-      <GameNav />
+      <GameNav minimal />
       <main className="page-wrap" style={{ maxWidth:800 }}>
 
         {/* Header */}
@@ -457,7 +447,6 @@ export default function FriendsPage() {
                 initial={{ opacity:0 }} animate={{ opacity:1 }}
                 className="game-card"
                 style={{
-                  overflow:'hidden',
                   borderColor:'rgba(245,158,11,0.22)',
                   boxShadow:'0 0 20px rgba(245,158,11,0.05)',
                 }}
@@ -497,7 +486,7 @@ export default function FriendsPage() {
 
             {/* Sent requests */}
             {friends.sent.length > 0 && (
-              <div className="game-card" style={{ overflow:'hidden' }}>
+              <div className="game-card">
                 <SectionHeader label="Sent requests" count={friends.sent.length} />
                 {friends.sent.map(f => (
                   <div key={f.username} style={{ display:'flex', alignItems:'center', gap:12, padding:'12px 16px', borderBottom:'1px solid var(--border)' }}>
@@ -519,7 +508,7 @@ export default function FriendsPage() {
             )}
 
             {/* Friends list */}
-            <div className="game-card" style={{ overflow:'hidden' }}>
+            <div className="game-card">
               <SectionHeader label="Your friends" count={friends.friends.length} />
               {loading ? (
                 <div style={{ padding:'32px 16px', textAlign:'center', fontFamily:"'Space Mono',monospace", fontSize:11, color:'var(--dim)' }}>
@@ -547,7 +536,6 @@ export default function FriendsPage() {
                       myUsername={myUsername}
                       onRemove={handleRemove}
                       onBlock={handleBlock}
-                      onInvite={handleInvite}
                       onChat={openChat}
                       unread={unread[f.username] ?? 0}
                     />
@@ -737,21 +725,33 @@ export default function FriendsPage() {
                     </div>
                   )}
                   {chatMessages.map(msg => {
-                    const isMe = msg.from === myUsername;
+                    const isMe = msg.from.toLowerCase() === myUsername.toLowerCase();
                     return (
                       <div key={msg.id} style={{ display:'flex', flexDirection:'column',
-                        alignItems: isMe ? 'flex-end' : 'flex-start' }}>
+                        alignItems: isMe ? 'flex-end' : 'flex-start', gap:3 }}>
+                        <span style={{
+                          fontSize:10, fontWeight:600,
+                          color: isMe ? 'var(--purple)' : 'var(--amber)',
+                          fontFamily:"'Space Mono',monospace", letterSpacing:'0.04em',
+                        }}>
+                          {isMe ? 'You' : chatFriendDisplay}
+                        </span>
                         <div style={{
-                          background: isMe ? 'rgba(167,139,250,0.16)' : 'rgba(255,255,255,0.06)',
-                          border: isMe ? '1px solid rgba(167,139,250,0.28)' : '1px solid rgba(255,255,255,0.08)',
+                          background: isMe
+                            ? 'rgba(167,139,250,0.18)'
+                            : 'rgba(245,158,11,0.13)',
+                          border: isMe
+                            ? '1px solid rgba(167,139,250,0.35)'
+                            : '1px solid rgba(245,158,11,0.28)',
                           borderRadius: isMe ? '14px 14px 3px 14px' : '14px 14px 14px 3px',
                           padding:'9px 14px', maxWidth:'68%',
-                          fontSize:13, color:'var(--text)', lineHeight:1.55,
-                          wordBreak:'break-word',
+                          fontSize:13,
+                          color: isMe ? '#e2d9ff' : '#fde68a',
+                          lineHeight:1.55, wordBreak:'break-word',
                         }}>
                           {msg.body}
                         </div>
-                        <span style={{ fontSize:10, color:'var(--dim)', marginTop:3 }}>
+                        <span style={{ fontSize:10, color:'var(--dim)' }}>
                           {new Date(msg.createdAt * 1000).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}
                         </span>
                       </div>
@@ -792,7 +792,7 @@ export default function FriendsPage() {
 
         {/* ── Blocked tab ── */}
         {tab === 'blocked' && (
-          <div className="game-card" style={{ overflow:'hidden' }}>
+          <div className="game-card">
             <SectionHeader label="Blocked users" count={friends.blocked.length} />
             {friends.blocked.length === 0 ? (
               <div style={{

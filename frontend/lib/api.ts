@@ -22,6 +22,12 @@ export interface ProfileData {
   total_secs: number;
   weekly_secs: number;
   session_count: number;
+  gender: string;
+  skinColor: string;
+  hairColor: string;
+  shirtColor: string;
+  pantsColor: string;
+  shoesColor: string;
 }
 
 export interface FriendEntry {
@@ -77,10 +83,18 @@ export async function fetchProfile(username: string): Promise<ProfileData> {
   return res.json();
 }
 
-export async function updateProfile(username: string, displayName: string, bio: string, goal: string): Promise<ProfileData> {
+export interface CharAppearance {
+  gender: string; skinColor: string; hairColor: string;
+  shirtColor: string; pantsColor: string; shoesColor: string;
+}
+
+export async function updateProfile(
+  username: string, displayName: string, bio: string, goal: string,
+  appearance?: CharAppearance,
+): Promise<ProfileData> {
   const res = await fetch(`${SERVER_HTTP}/profile`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, displayName, bio, goal }),
+    body: JSON.stringify({ username, displayName, bio, goal, ...appearance }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? 'Failed to update profile');

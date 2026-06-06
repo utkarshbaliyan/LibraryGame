@@ -112,7 +112,7 @@ export default function LeaderboardPage() {
 
   return (
     <>
-      <GameNav />
+      <GameNav minimal />
       <main className="page-wrap" style={{ maxWidth:720 }}>
 
         {/* Header */}

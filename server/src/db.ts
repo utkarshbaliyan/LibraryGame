@@ -52,10 +52,19 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_msg_pair ON messages(from_user, to_user);
 `);
 
-// Migrate: add display_name if missing (old DB without it)
-try {
-  db.exec("ALTER TABLE users ADD COLUMN display_name TEXT NOT NULL DEFAULT ''");
-} catch { /* column already exists */ }
+// Migrations for columns added after initial schema
+const migrations = [
+  "ALTER TABLE users ADD COLUMN display_name TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE users ADD COLUMN gender TEXT NOT NULL DEFAULT 'male'",
+  "ALTER TABLE users ADD COLUMN skin_color TEXT NOT NULL DEFAULT '#f5c5a3'",
+  "ALTER TABLE users ADD COLUMN hair_color TEXT NOT NULL DEFAULT '#1a0a00'",
+  "ALTER TABLE users ADD COLUMN shirt_color TEXT NOT NULL DEFAULT '#f59e0b'",
+  "ALTER TABLE users ADD COLUMN pants_color TEXT NOT NULL DEFAULT '#1e2a4a'",
+  "ALTER TABLE users ADD COLUMN shoes_color TEXT NOT NULL DEFAULT '#1a1008'",
+];
+for (const sql of migrations) {
+  try { db.exec(sql); } catch { /* column already exists */ }
+}
 
 // ── ISO week key "YYYY-WNN" ────────────────────────────────────────────────
 function isoWeek(): string {
@@ -235,7 +244,7 @@ export function getLeaderboard() {
 
 export function getProfile(username: string) {
   const week = isoWeek();
-  const user = db.prepare("SELECT name, display_name, bio, goal, created_at FROM users WHERE name = ?").get(username) as any;
+  const user = db.prepare("SELECT name, display_name, bio, goal, created_at, gender, skin_color, hair_color, shirt_color, pants_color, shoes_color FROM users WHERE name = ?").get(username) as any;
   const stats = db.prepare(`
     SELECT
       COALESCE(SUM(CASE WHEN week = ? THEN duration_seconds ELSE 0 END), 0) AS weekly_secs,
@@ -253,6 +262,12 @@ export function getProfile(username: string) {
     weekly_secs:   stats?.weekly_secs  ?? 0,
     total_secs:    stats?.total_secs   ?? 0,
     session_count: stats?.session_count ?? 0,
+    gender:        user?.gender        ?? "male",
+    skinColor:     user?.skin_color    ?? "#f5c5a3",
+    hairColor:     user?.hair_color    ?? "#1a0a00",
+    shirtColor:    user?.shirt_color   ?? "#f59e0b",
+    pantsColor:    user?.pants_color   ?? "#1e2a4a",
+    shoesColor:    user?.shoes_color   ?? "#1a1008",
   };
 }
 
@@ -271,12 +286,18 @@ export function getMessages(userA: string, userB: string, limit = 60) {
   const la = userA.toLowerCase().trim();
   const lb = userB.toLowerCase().trim();
   const rows = db.prepare(`
-    SELECT id, from_user AS fromUser, to_user AS toUser, body, read, created_at AS createdAt
+    SELECT id, from_user, to_user, body, read, created_at AS createdAt
     FROM messages
     WHERE (from_user = ? AND to_user = ?) OR (from_user = ? AND to_user = ?)
     ORDER BY created_at DESC, id DESC LIMIT ?
   `).all(la, lb, lb, la, limit) as any[];
-  return rows.reverse();
+  return rows.reverse().map((r: any) => ({
+    id:        r.id,
+    from:      r.from_user,
+    to:        r.to_user,
+    body:      r.body,
+    createdAt: r.createdAt,
+  }));
 }
 
 export function markRead(toUser: string, fromUser: string) {
@@ -300,13 +321,22 @@ export function getUnreadCounts(username: string): Record<string, number> {
 }
 
 export function updateProfile(
-  username: string,
-  displayName: string,
-  bio: string,
-  goal: string,
+  username: string, displayName: string, bio: string, goal: string,
+  gender?: string, skinColor?: string, hairColor?: string,
+  shirtColor?: string, pantsColor?: string, shoesColor?: string,
 ): { ok: boolean; error?: string } {
   ensureUser(username);
-  db.prepare("UPDATE users SET display_name = ?, bio = ?, goal = ? WHERE name = ?")
-    .run(displayName.trim().slice(0, 30) || username, bio, goal, username);
+  db.prepare(`
+    UPDATE users SET display_name=?, bio=?, goal=?,
+      gender=COALESCE(?,gender), skin_color=COALESCE(?,skin_color),
+      hair_color=COALESCE(?,hair_color), shirt_color=COALESCE(?,shirt_color),
+      pants_color=COALESCE(?,pants_color), shoes_color=COALESCE(?,shoes_color)
+    WHERE name=?
+  `).run(
+    displayName.trim().slice(0, 30) || username, bio, goal,
+    gender ?? null, skinColor ?? null, hairColor ?? null,
+    shirtColor ?? null, pantsColor ?? null, shoesColor ?? null,
+    username,
+  );
   return { ok: true };
 }

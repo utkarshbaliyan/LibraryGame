@@ -365,3 +365,12 @@ textarea.game-input { resize: vertical; }
   letter-spacing: 0.04em;
   text-shadow: 0 0 30px var(--accent-glow), 0 2px 8px rgba(0,0,0,0.6);
 }
+
+/* ─── Home-page side rails (My Stats / Leaderboard) ──────────────── */
+.sl-rail { scrollbar-width: thin; scrollbar-color: rgba(178,126,40,0.4) transparent; }
+.sl-rail::-webkit-scrollbar { width: 7px; }
+.sl-rail::-webkit-scrollbar-thumb { background: rgba(178,126,40,0.35); border-radius: 4px; }
+.sl-rail::-webkit-scrollbar-track { background: transparent; }
+/* Collapse rails on narrow screens so the world stays usable */
+@media (max-width: 1180px) { .sl-rail { width: 250px !important; } }
+@media (max-width: 920px)  { .sl-rail { display: none !important; } }

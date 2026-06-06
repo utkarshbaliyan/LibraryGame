@@ -54,7 +54,7 @@ app.get("/profile/:username", (req, res) => {
 });
 
 app.put("/profile", (req, res) => {
-  const { username, displayName, bio, goal } = req.body ?? {};
+  const { username, displayName, bio, goal, gender, skinColor, hairColor, shirtColor, pantsColor, shoesColor } = req.body ?? {};
   if (typeof username !== "string" || !username.trim()) {
     res.status(400).json({ error: "invalid username" }); return;
   }
@@ -63,6 +63,12 @@ app.put("/profile", (req, res) => {
     username.trim(), dn,
     typeof bio  === "string" ? bio.trim().slice(0, 300)  : "",
     typeof goal === "string" ? goal.trim().slice(0, 200) : "",
+    typeof gender     === "string" ? gender     : undefined,
+    typeof skinColor  === "string" ? skinColor  : undefined,
+    typeof hairColor  === "string" ? hairColor  : undefined,
+    typeof shirtColor === "string" ? shirtColor : undefined,
+    typeof pantsColor === "string" ? pantsColor : undefined,
+    typeof shoesColor === "string" ? shoesColor : undefined,
   );
   if (!result.ok) { res.status(409).json({ error: result.error }); return; }
   res.json(getProfile(username.trim()));
@@ -155,18 +161,29 @@ app.post("/friends/invite", (req, res) => {
   if (typeof from !== "string" || typeof to !== "string" || typeof roomId !== "string") {
     res.status(400).json({ error: "invalid params" }); return;
   }
-  if (!areFriends(from.trim(), to.trim())) {
+  const lf = from.trim().toLowerCase();
+  const lt = to.trim().toLowerCase();
+  if (!areFriends(lf, lt)) {
     res.status(403).json({ error: "Not friends" }); return;
   }
-  const sender = onlineUsers.get(from.trim());
-  const room   = onlineUsers.get(from.trim());
-  pushInvite(to.trim(), {
-    from:        from.trim(),
+  const sender = onlineUsers.get(lf) ?? onlineUsers.get(from.trim());
+  const invite = {
+    from:        lf,
     fromDisplay: sender?.displayName ?? from.trim(),
     roomId:      roomId.trim(),
-    roomLabel:   room?.roomLabel ?? "Library",
+    roomLabel:   sender?.roomLabel ?? "Library",
     at:          Math.floor(Date.now() / 1000),
-  });
+  };
+
+  // Primary: instant delivery via Colyseus WebSocket
+  const destClient = chatSessions.get(lt);
+  if (destClient) {
+    destClient.send("invite", invite);
+  }
+
+  // Fallback: store for HTTP polling (recipient not yet in game)
+  pushInvite(lt, invite);
+
   res.json({ ok: true });
 });
 

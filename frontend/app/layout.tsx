@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Space_Grotesk, Space_Mono, Cinzel } from 'next/font/google';
 import './globals.css';
+import InviteBanner from './InviteBanner';
 
 const spaceGrotesk = Space_Grotesk({
   subsets: ['latin'],
@@ -32,6 +33,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={`${spaceGrotesk.variable} ${spaceMono.variable} ${cinzel.variable}`}>
       <body style={{ fontFamily: "var(--font-grotesk, 'Space Grotesk', system-ui, sans-serif)" }}>
         {children}
+        <InviteBanner />
       </body>
     </html>
   );
