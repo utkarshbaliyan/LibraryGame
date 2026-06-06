@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Study Library — Set Up Your Profile</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:           #0d0d1a;
+      --surface:      #13132a;
+      --surface-2:    #1a1a36;
+      --border:       rgba(74, 222, 128, 0.12);
+      --border-focus: rgba(74, 222, 128, 0.5);
+      --accent:       #4ade80;
+      --text:         #f1f5f9;
+      --text-muted:   #94a3b8;
+      --text-dim:     #64748b;
+      --error:        #f87171;
+    }
+
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      background-color: var(--bg);
+      background-image:
+        linear-gradient(rgba(74, 222, 128, 0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(74, 222, 128, 0.025) 1px, transparent 1px);
+      background-size: 40px 40px;
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Nav ── */
+    nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 48px;
+      height: 64px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav-logo {
+      font-family: 'Courier New', monospace;
+      font-weight: 700;
+      font-size: 15px;
+      letter-spacing: 0.14em;
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    .back-link {
+      font-size: 14px;
+      color: var(--text-dim);
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: color 0.15s;
+    }
+    .back-link:hover { color: var(--text-muted); }
+
+    /* ── Main layout ── */
+    main {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 48px;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 480px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 48px 44px;
+    }
+
+    /* ── Header ── */
+    .card-header {
+      margin-bottom: 36px;
+    }
+
+    .card-step {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 12px;
+    }
+
+    .card-header h1 {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+      margin-bottom: 10px;
+    }
+
+    .card-header p {
+      font-size: 15px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* ── Form ── */
+    .form-group {
+      margin-bottom: 24px;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      letter-spacing: 0.03em;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 13px 16px;
+      font-family: inherit;
+      font-size: 15px;
+      color: var(--text);
+      outline: none;
+      transition: border-color 0.18s, box-shadow 0.18s;
+    }
+
+    input[type="text"]::placeholder {
+      color: var(--text-dim);
+    }
+
+    input[type="text"]:focus {
+      border-color: var(--border-focus);
+      box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.08);
+    }
+
+    input[type="text"].error {
+      border-color: var(--error);
+      box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.08);
+    }
+
+    .input-hint {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 6px;
+    }
+
+    .hint-text {
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+
+    .char-count {
+      font-size: 12px;
+      color: var(--text-dim);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .error-msg {
+      font-size: 12px;
+      color: var(--error);
+      margin-top: 6px;
+      display: none;
+    }
+    .error-msg.visible { display: block; }
+
+    /* ── Avatar color picker ── */
+    .color-label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+      letter-spacing: 0.03em;
+    }
+
+    .color-options {
+      display: flex;
+      gap: 10px;
+    }
+
+    .color-option {
+      position: relative;
+    }
+
+    .color-option input[type="radio"] {
+      position: absolute;
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .color-swatch {
+      display: block;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      cursor: pointer;
+      border: 3px solid transparent;
+      transition: border-color 0.15s, transform 0.15s;
+    }
+
+    .color-option input:checked + .color-swatch,
+    .color-swatch:hover {
+      border-color: var(--text);
+      transform: scale(1.1);
+    }
+
+    /* ── Submit ── */
+    .btn-submit {
+      width: 100%;
+      padding: 14px;
+      background: var(--accent);
+      color: #0d0d1a;
+      font-family: inherit;
+      font-size: 15px;
+      font-weight: 700;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.18s, transform 0.18s;
+      margin-top: 8px;
+    }
+    .btn-submit:hover { background: #86efac; transform: translateY(-1px); }
+    .btn-submit:active { transform: translateY(0); }
+
+    /* ── Footer note ── */
+    .card-footer {
+      margin-top: 24px;
+      text-align: center;
+      font-size: 13px;
+      color: var(--text-dim);
+    }
+
+    .card-footer a { color: var(--accent); }
+    .card-footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a href="index.html" class="nav-logo">STUDY LIBRARY</a>
+  <a href="index.html" class="back-link">&larr; Back to home</a>
+</nav>
+
+<main>
+  <div class="card">
+    <div class="card-header">
+      <div class="card-step">Step 1 of 2</div>
+      <h1>Set up your identity</h1>
+      <p>Pick a display name. Other aspirants will see it above your avatar in the library.</p>
+    </div>
+
+    <form id="setup-form" novalidate>
+
+      <!-- Name -->
+      <div class="form-group">
+        <label for="name-input">Display name</label>
+        <input
+          type="text"
+          id="name-input"
+          name="name"
+          placeholder="e.g. Arjun, Priya_UPSC, JEE2025..."
+          maxlength="24"
+          autocomplete="off"
+          spellcheck="false"
+        >
+        <div class="input-hint">
+          <span class="hint-text">Letters, numbers, underscores and hyphens</span>
+          <span class="char-count" id="char-count">0 / 24</span>
+        </div>
+        <div class="error-msg" id="name-error">Please enter a name (2–24 characters).</div>
+      </div>
+
+      <!-- Avatar colour (saves for M2 when sprites land) -->
+      <div class="form-group">
+        <span class="color-label">Avatar colour <span style="color:var(--text-dim); font-weight:400;">(coming in M2)</span></span>
+        <div class="color-options">
+          <label class="color-option" title="Green">
+            <input type="radio" name="color" value="green" checked>
+            <span class="color-swatch" style="background:#4ade80;"></span>
+          </label>
+          <label class="color-option" title="Blue">
+            <input type="radio" name="color" value="blue">
+            <span class="color-swatch" style="background:#60a5fa;"></span>
+          </label>
+          <label class="color-option" title="Orange">
+            <input type="radio" name="color" value="orange">
+            <span class="color-swatch" style="background:#fb923c;"></span>
+          </label>
+          <label class="color-option" title="Purple">
+            <input type="radio" name="color" value="purple">
+            <span class="color-swatch" style="background:#a78bfa;"></span>
+          </label>
+          <label class="color-option" title="Rose">
+            <input type="radio" name="color" value="rose">
+            <span class="color-swatch" style="background:#fb7185;"></span>
+          </label>
+        </div>
+      </div>
+
+      <button type="submit" class="btn-submit">Enter the Library &rarr;</button>
+    </form>
+
+    <div class="card-footer">
+      Already set up? <a href="game.html">Go straight to the library</a>
+    </div>
+  </div>
+</main>
+
+<script>
+  const nameInput   = document.getElementById('name-input');
+  const charCount   = document.getElementById('char-count');
+  const nameError   = document.getElementById('name-error');
+  const form        = document.getElementById('setup-form');
+  const VALID_RE    = /^[a-zA-Z0-9_\- ]{2,24}$/;
+
+  // Pre-fill if returning
+  const saved = localStorage.getItem('sl_name');
+  if (saved) nameInput.value = saved;
+
+  // Live char counter
+  nameInput.addEventListener('input', function() {
+    const len = this.value.length;
+    charCount.textContent = len + ' / 24';
+    if (len > 0) {
+      this.classList.remove('error');
+      nameError.classList.remove('visible');
+    }
+  });
+
+  // Submit
+  form.addEventListener('submit', function(e) {
+    e.preventDefault();
+
+    const name  = nameInput.value.trim();
+    const color = form.querySelector('input[name="color"]:checked').value;
+
+    if (!VALID_RE.test(name)) {
+      nameInput.classList.add('error');
+      nameError.classList.add('visible');
+      nameInput.focus();
+      return;
+    }
+
+    localStorage.setItem('sl_name',  name);
+    localStorage.setItem('sl_color', color);
+
+    window.location.href = 'game.html';
+  });
+</script>
+
+</body>
+</html>
